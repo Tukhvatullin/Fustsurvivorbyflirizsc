@@ -32,6 +32,7 @@ end)
 -- ==========================================
 local Settings = {
     Aimbot_Enabled = false,
+    Fust_Photo_Enabled = true,
     SilentAim_Enabled = false,
     SilentAimMethod = "Raycast",
     HitChance = 100,
@@ -49,6 +50,8 @@ local Settings = {
     Aimbot_MaxDistance = 800,
     
     SmartBallistics_Enabled = true,
+    SmartBallistics_DropScale = 1.0,
+    SmartBallistics_LeadScale = 1.0,
 
     DistVector_Enabled = false,
     DistVector_UpScale = 1.5,
@@ -172,28 +175,28 @@ local SOUND_PRESETS = {
 local Connections = {}
 local espCache = {}
 
--- Все внутренние переменные и интерактивные смещения ESP упакованы в State
 local State = {
     LockedTarget = nil,
     StickyTarget = nil,
     smoothedTargetVel = {},
     teamCheckCache = {},
+    robloxFriendsCache = {},
+    manualTeammates = {},
     IsUnloaded = false,
     BulletCharge = 0,
     IsLMBDown = false,
     lastLocalClick = 0,
     lastHitSoundTime = 0,
 
-    -- Интерактивные смещения элементов ESP (изменяются перетаскиванием в ESP Preview)
     ESP_Layout = {
-        Name_X = 0,       -- Смещение относительно центра бокса (в долях ширины бокса)
-        Name_Y = -0.09,   -- Смещение относительно верха бокса (в долях высоты бокса)
-        HpBar_X = -0.56,  -- Смещение относительно центра бокса
-        HpBar_Y = 0,      -- Смещение по высоте
-        HpText_X = -0.76, -- Смещение текста HP относительно центра бокса
-        HpText_Y = 0.13,  -- Смещение текста HP относительно верха бокса
-        Inv_X = 0,        -- Смещение InvCheck по горизонтали
-        Inv_Y = -0.30     -- Смещение InvCheck относительно верха бокса
+        Name_X = 0,
+        Name_Y = -0.09,
+        HpBar_X = -0.56,
+        HpBar_Y = 0,
+        HpText_X = -0.76,
+        HpText_Y = 0.13,
+        Inv_X = 0,
+        Inv_Y = -0.30
     },
 
     modifiedParts = {},
@@ -255,7 +258,6 @@ local State = {
     hookedSounds = {},
 
     weaponBallisticsCache = {},
-    learnedWeaponBallistics = {},
     savedAtmosphereData = {},
     OrigLighting = {
         ClockTime = Lighting.ClockTime,
@@ -268,7 +270,106 @@ local State = {
     }
 }
 
+-- ==========================================
+-- ФОТО СПРАВА СНИЗУ ЭКРАНА (ИЗ MENU.LUA)
+-- ==========================================
+local PHOTO_IMAGE_URL = "https://i.pinimg.com/736x/85/f7/b8/85f7b8894224fd0068d1dab7ea742517.jpg"
+local PHOTO_SIZE = 260
+
+local photoGui = Instance.new("ScreenGui")
+photoGui.Name = "BottomRightPhotoGui"
+photoGui.ResetOnSpawn = false
+photoGui.DisplayOrder = 999999
+if not pcall(function() photoGui.Parent = CoreGui end) then
+    photoGui.Parent = PlayerGui
+end
+
+local animeImage = Instance.new("ImageLabel")
+animeImage.Name = "BottomRightPhoto"
+animeImage.AnchorPoint = Vector2.new(0.5, 0.5)
+animeImage.Size = UDim2.new(0, PHOTO_SIZE, 0, PHOTO_SIZE)
+
+local vp0 = (Camera and Camera.ViewportSize) or Vector2.new(1920, 1080)
+animeImage.Position = UDim2.fromScale(1 - (PHOTO_SIZE / 2 + 20) / vp0.X, 1 - (PHOTO_SIZE / 2 + 10) / vp0.Y)
+animeImage.Active = true
+animeImage.BackgroundTransparency = 1
+animeImage.BorderSizePixel = 0
+animeImage.ScaleType = Enum.ScaleType.Fit
+animeImage.ZIndex = 30
+animeImage.Visible = Settings.Fust_Photo_Enabled
+animeImage.Parent = photoGui
+
+task.spawn(function()
+    local getAsset = getcustomasset or getsynasset
+    local httpFn = (syn and syn.request) or request or http_request or (http and http.request)
+    if writefile and getAsset and httpFn then
+        pcall(function()
+            local res = httpFn({Url = PHOTO_IMAGE_URL, Method = "GET"})
+            if res and res.Body and #res.Body > 0 then
+                local ext = PHOTO_IMAGE_URL:lower():match("%.(%w+)$") or "png"
+                local fileName = "Clean3DMenu_Photo." .. ext
+                writefile(fileName, res.Body)
+                animeImage.Image = getAsset(fileName)
+            end
+        end)
+    end
+end)
+
+local draggingPhoto = false
+local photoMouseStart, photoCenterStart
+
+animeImage.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingPhoto = true
+        photoMouseStart = UserInputService:GetMouseLocation()
+        local vp = workspace.CurrentCamera.ViewportSize
+        photoCenterStart = Vector2.new(animeImage.Position.X.Scale * vp.X, animeImage.Position.Y.Scale * vp.Y)
+    end
+end)
+
+table.insert(Connections, UserInputService.InputChanged:Connect(function(input)
+    if draggingPhoto and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local vp = workspace.CurrentCamera.ViewportSize
+        local half = animeImage.AbsoluteSize / 2
+        local target = photoCenterStart + (UserInputService:GetMouseLocation() - photoMouseStart)
+        local cx = math.clamp(target.X, half.X, math.max(half.X, vp.X - half.X))
+        local cy = math.clamp(target.Y, half.Y, math.max(half.Y, vp.Y - half.Y))
+        animeImage.Position = UDim2.fromScale(cx / vp.X, cy / vp.Y)
+    end
+end))
+
+table.insert(Connections, UserInputService.InputEnded:Connect(function(input)
+    if draggingPhoto and input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingPhoto = false
+    end
+end))
+
+local function updatePhotoVisibility(state)
+    Settings.Fust_Photo_Enabled = state
+    if animeImage then
+        animeImage.Visible = state
+    end
+end
+
+-- Фоновое кэширование друзей Roblox без блокировки потока рендера
+local function cachePlayerFriendStatus(plr)
+    if not plr or plr == LocalPlayer then return end
+    task.spawn(function()
+        local ok, res = pcall(function()
+            return LocalPlayer:IsFriendsWith(plr.UserId)
+        end)
+        if ok and res then
+            State.robloxFriendsCache[plr] = true
+            State.teamCheckCache[plr] = nil
+        end
+    end)
+end
+
 do
+    for _, p in ipairs(Players:GetPlayers()) do
+        cachePlayerFriendStatus(p)
+    end
+
     for _, child in ipairs(Lighting:GetChildren()) do
         if child:IsA("Atmosphere") and not State.savedAtmosphereData[child] then
             State.savedAtmosphereData[child] = {
@@ -644,17 +745,18 @@ local function isPotentialProjectile(inst)
 end
 
 -- ==========================================
--- УМНЫЙ АВТО-ДЕТЕКТОР БАЛЛИСТИКИ
+-- УМНЫЙ АВТО-ДЕТЕКТОР БАЛЛИСТИКИ (ПОД КАЖДОЕ ОРУЖИЕ)
 -- ==========================================
 local WEAPON_CLASS_PRESETS = {
-    Bow      = { Speed = 480,  Drop = 28, Drag = 0.015, FlatRange = 30,  IsProjectile = true  },
-    Crossbow = { Speed = 550,  Drop = 24, Drag = 0.015, FlatRange = 35,  IsProjectile = true  },
-    Nailgun  = { Speed = 250,  Drop = 90, Drag = 0.045, FlatRange = 10,  IsProjectile = true  },
-    Shotgun  = { Speed = 850,  Drop = 12, Drag = 0.015, FlatRange = 65,  IsProjectile = false },
-    Pistol   = { Speed = 1150, Drop = 6,  Drag = 0.005, FlatRange = 95,  IsProjectile = false },
-    SMG      = { Speed = 1100, Drop = 8,  Drag = 0.006, FlatRange = 85,  IsProjectile = false },
-    Rifle    = { Speed = 1350, Drop = 9,  Drag = 0.005, FlatRange = 110, IsProjectile = false },
-    Sniper   = { Speed = 1800, Drop = 5,  Drag = 0.002, FlatRange = 160, IsProjectile = false }
+    Bow      = { Speed = 320,  Drop = 85, Drag = 0.045 }, -- Охотничий / обычный лук
+    Compound = { Speed = 420,  Drop = 72, Drag = 0.035 }, -- Блочный лук
+    Crossbow = { Speed = 440,  Drop = 70, Drag = 0.035 }, -- Арбалет
+    Nailgun  = { Speed = 260,  Drop = 95, Drag = 0.050 }, -- Гвоздомет
+    Shotgun  = { Speed = 520,  Drop = 75, Drag = 0.040 }, -- Дробовики / Пайп / Двустволка
+    Pistol   = { Speed = 650,  Drop = 62, Drag = 0.025 }, -- Револьвер, Пешка, Питон, М92
+    SMG      = { Speed = 680,  Drop = 60, Drag = 0.022 }, -- Томпсон, СМГ, МП5, Узи
+    Rifle    = { Speed = 900,  Drop = 55, Drag = 0.015 }, -- Калаш, Берданка, ЛР-300, М249
+    Sniper   = { Speed = 1250, Drop = 38, Drag = 0.008 }  -- Болтовка, Л96, СВД
 }
 
 local function getEquippedWeaponNameAndInstance()
@@ -676,25 +778,27 @@ local function getEquippedWeaponNameAndInstance()
             end
         end
     end
-    return "DefaultGun", nil
+    return "DefaultRifle", nil
 end
 
 local function classifyWeaponByName(name)
     local n = string.lower(name or "")
     if n:find("crossbow") or n:find("арбалет") or n:find("cross") then
         return WEAPON_CLASS_PRESETS.Crossbow
-    elseif n:find("bow") or n:find("лук") or n:find("hunting") or n:find("compound") then
+    elseif n:find("compound") or n:find("блочн") then
+        return WEAPON_CLASS_PRESETS.Compound
+    elseif n:find("bow") or n:find("лук") or n:find("hunting") then
         return WEAPON_CLASS_PRESETS.Bow
     elseif n:find("nail") or n:find("гвозд") then
         return WEAPON_CLASS_PRESETS.Nailgun
-    elseif n:find("revolver") or n:find("pistol") or n:find("python") or n:find("m92") or n:find("glock") or n:find("beretta") or n:find("deagle") or n:find("usp") or n:find("p250") or n:find("револьв") or n:find("пешк") or n:find("пистол") or n:find(" кольт") or n:find("макар") then
-        return WEAPON_CLASS_PRESETS.Pistol
     elseif n:find("shotgun") or n:find("pipe") or n:find("double") or n:find("spas") or n:find("pump") or n:find("eoka") or n:find("saiga") or n:find("дроб") or n:find("пайп") or n:find("двуствол") then
         return WEAPON_CLASS_PRESETS.Shotgun
     elseif n:find("l96") or n:find("bolt") or n:find("sniper") or n:find("awp") or n:find("svd") or n:find("m24") or n:find("kar98") or n:find("болт") or n:find("снайп") or n:find("свд") then
         return WEAPON_CLASS_PRESETS.Sniper
     elseif n:find("smg") or n:find("thompson") or n:find("mp5") or n:find("uzi") or n:find("mac") or n:find("vector") or n:find("p90") or n:find("томпс") or n:find("смг") then
         return WEAPON_CLASS_PRESETS.SMG
+    elseif n:find("revolver") or n:find("pistol") or n:find("python") or n:find("m92") or n:find("glock") or n:find("beretta") or n:find("deagle") or n:find("usp") or n:find("p250") or n:find("револьв") or n:find("пешк") or n:find("пистол") or n:find("макар") then
+        return WEAPON_CLASS_PRESETS.Pistol
     elseif n:find("ak") or n:find("assault") or n:find("lr") or n:find("m249") or n:find("sar") or n:find("semi") or n:find("rifle") or n:find("m4") or n:find("scar") or n:find("калаш") or n:find("бердан") or n:find("винтовк") or n:find("автомат") then
         return WEAPON_CLASS_PRESETS.Rifle
     end
@@ -709,9 +813,9 @@ local function extractStatsFromInstance(inst)
         for k, v in pairs(inst:GetAttributes()) do
             if type(v) == "number" and v > 0 then
                 local kl = string.lower(k)
-                if (kl:find("bulletspeed") or kl:find("projectilespeed") or kl:find("muzzlevelocity") or kl == "speed" or kl == "velocity") and v >= 120 and v <= 6000 then
+                if (kl:find("speed") or kl:find("velocity") or kl:find("muzzle") or kl:find("vel")) and v >= 80 and v <= 5000 then
                     foundSpeed = v
-                elseif (kl:find("bulletdrop") or kl:find("gravity") or kl == "drop") and v >= 0 and v <= 300 then
+                elseif (kl:find("drop") or kl:find("gravity") or kl:find("grav")) and v >= 1 and v <= 500 then
                     foundDrop = v
                 end
             end
@@ -722,9 +826,9 @@ local function extractStatsFromInstance(inst)
         if desc:IsA("NumberValue") or desc:IsA("IntValue") then
             local nl = string.lower(desc.Name)
             local v = desc.Value
-            if (nl:find("bulletspeed") or nl:find("projectilespeed") or nl:find("muzzlevelocity") or nl == "speed") and v >= 120 and v <= 6000 then
+            if (nl:find("speed") or nl:find("velocity") or nl:find("muzzle")) and v >= 80 and v <= 5000 then
                 foundSpeed = v
-            elseif (nl:find("bulletdrop") or nl:find("gravity") or nl == "drop") and v >= 0 and v <= 300 then
+            elseif (nl:find("drop") or nl:find("gravity") or nl:find("grav")) and v >= 1 and v <= 500 then
                 foundDrop = v
             end
         elseif desc:IsA("ModuleScript") then
@@ -734,9 +838,9 @@ local function extractStatsFromInstance(inst)
                     for k, v in pairs(data) do
                         if type(v) == "number" then
                             local kl = string.lower(tostring(k))
-                            if (kl:find("bulletspeed") or kl:find("projectilespeed") or kl:find("muzzlevelocity") or kl == "speed" or kl == "velocity") and v >= 120 and v <= 6000 then
+                            if (kl:find("bulletspeed") or kl:find("projectilespeed") or kl:find("muzzlevelocity") or kl == "speed" or kl == "velocity") and v >= 80 and v <= 5000 then
                                 foundSpeed = v
-                            elseif (kl:find("bulletdrop") or kl:find("gravity") or kl == "drop") and v >= 0 and v <= 300 then
+                            elseif (kl:find("drop") or kl:find("gravity") or kl == "bulletdrop") and v >= 1 and v <= 500 then
                                 foundDrop = v
                             end
                         end
@@ -752,54 +856,35 @@ end
 local function getActiveWeaponBallistics()
     local weaponName, activeTool = getEquippedWeaponNameAndInstance()
 
-    if State.learnedWeaponBallistics[weaponName] then
-        return State.learnedWeaponBallistics[weaponName]
-    end
-
     if State.weaponBallisticsCache[weaponName] then
         return State.weaponBallisticsCache[weaponName]
     end
 
     local preset = classifyWeaponByName(weaponName)
-    if not preset then
-        if isHoldingBowWeapon() then
-            preset = WEAPON_CLASS_PRESETS.Bow
-        else
-            preset = WEAPON_CLASS_PRESETS.Pistol
-        end
-    end
+        or (isHoldingBowWeapon() and WEAPON_CLASS_PRESETS.Bow)
+        or WEAPON_CLASS_PRESETS.Rifle
 
     local finalSpeed = preset.Speed
     local finalDrop = preset.Drop
     local finalDrag = preset.Drag
-    local finalFlatRange = preset.FlatRange
-    local isProj = preset.IsProjectile
 
     if activeTool then
         local s, d = extractStatsFromInstance(activeTool)
         if s then finalSpeed = s end
-        if d then
-            finalDrop = d
-            if d > 40 then
-                isProj = true
-                finalFlatRange = 15
-            end
-        end
+        if d then finalDrop = d end
     end
 
     local result = {
         Speed = finalSpeed,
         Drop = finalDrop,
-        Drag = finalDrag,
-        FlatRange = finalFlatRange,
-        IsProjectile = isProj
+        Drag = finalDrag
     }
     State.weaponBallisticsCache[weaponName] = result
     return result
 end
 
 local function registerCandidateProjectile(obj)
-    if (not Settings.Fust_BulletTracer_Enabled and not Settings.SmartBallistics_Enabled) or State.IsUnloaded then return end
+    if not Settings.Fust_BulletTracer_Enabled or State.IsUnloaded then return end
     local part = nil
     if obj:IsA("BasePart") then
         part = obj
@@ -898,25 +983,22 @@ local function setFustBulletTracerState(state)
     table.clear(State.weaponFireConns)
     table.clear(State.hookedSounds)
 
-    if not state and not Settings.SmartBallistics_Enabled then
+    if not state then
         if State.tracerWorkspaceConn then State.tracerWorkspaceConn:Disconnect() State.tracerWorkspaceConn = nil end
     end
     table.clear(State.trackedProjectiles)
     table.clear(State.candidateProjectiles)
 
-    if state or Settings.SmartBallistics_Enabled then
-        if state then
-            if LocalPlayer.Character then hookWeaponFireEffects(LocalPlayer.Character) end
-            if Camera then hookWeaponFireEffects(Camera) end
-        end
+    if state then
+        if LocalPlayer.Character then hookWeaponFireEffects(LocalPlayer.Character) end
+        if Camera then hookWeaponFireEffects(Camera) end
         if not State.tracerWorkspaceConn then
             State.tracerWorkspaceConn = workspace.DescendantAdded:Connect(function(desc)
-                if (not Settings.Fust_BulletTracer_Enabled and not Settings.SmartBallistics_Enabled) or State.IsUnloaded then return end
+                if not Settings.Fust_BulletTracer_Enabled or State.IsUnloaded then return end
                 task.defer(registerCandidateProjectile, desc)
             end)
         end
-    end
-    if not state and State.tracerFolder then
+    elseif State.tracerFolder then
         State.tracerFolder:ClearAllChildren()
     end
 end
@@ -1048,7 +1130,7 @@ local function setFustCarEspState(state)
     end
 end
 
--- ЛОГИКА FUST INVENTORY ESP (С ПОДДЕРЖКОЙ ПЕРЕТАСКИВАНИЯ ИЗ ESP PREVIEW)
+-- ЛОГИКА FUST INVENTORY ESP
 local function updateInvCheck()
     if not Settings.Fust_InvCheck_Enabled or State.IsUnloaded then
         for _, ui in pairs(State.invUIs) do if ui then ui:Destroy() end end
@@ -1062,7 +1144,6 @@ local function updateInvCheck()
     State.lastInvUpdate = now
 
     local iconSize = Settings.Fust_InvCheck_Size or 24
-    -- Конвертируем смещение из 2D превью в мировые координаты относительно головы игрока
     local studsX = State.ESP_Layout.Inv_X * 3.5
     local studsY = 0.5 - (State.ESP_Layout.Inv_Y * 6.5)
 
@@ -1418,9 +1499,10 @@ end
 local function getSmoothTargetVelocity(targetPart)
     if not targetPart then return Vector3.zero end
     local rawVel = targetPart.AssemblyLinearVelocity or Vector3.zero
+    local cleanVel = Vector3.new(rawVel.X, math.abs(rawVel.Y) > 4 and rawVel.Y * 0.25 or 0, rawVel.Z)
     local model = targetPart:FindFirstAncestorOfClass("Model") or targetPart
-    local prevVel = State.smoothedTargetVel[model] or rawVel
-    local filteredVel = prevVel:Lerp(rawVel, 0.18)
+    local prevVel = State.smoothedTargetVel[model] or cleanVel
+    local filteredVel = prevVel:Lerp(cleanVel, 0.22)
     State.smoothedTargetVel[model] = filteredVel
     return filteredVel
 end
@@ -1428,60 +1510,49 @@ end
 local function getPredictedTargetPosition(targetPart, originPos)
     if not targetPart then return Vector3.zero end
     local targetPos = targetPart.Position
+    if targetPart.Name == "Head" then
+        targetPos = targetPos + Vector3.new(0, 0.18, 0)
+    end
+
     local targetVel = getSmoothTargetVelocity(targetPart)
     local startPos = originPos or (Camera and Camera.CFrame.Position) or Vector3.zero
 
     if Settings.SmartBallistics_Enabled then
         local stats = getActiveWeaponBallistics()
-        local projSpeed = math.max(stats.Speed or 1150, 60)
-        local projDrop = stats.Drop or 6
-        local drag = stats.Drag or 0.005
-        local flatRange = stats.FlatRange or 90
+        local projSpeed = math.max(stats.Speed or 900, 50)
+        local projDrop = (stats.Drop or 55) * (Settings.SmartBallistics_DropScale or 1.0)
+        local drag = stats.Drag or 0.015
 
+        local leadVel = targetVel * (Settings.SmartBallistics_LeadScale or 1.0)
         local dist = (targetPos - startPos).Magnitude
-
-        local horizSpeed = Vector3.new(targetVel.X, 0, targetVel.Z).Magnitude
-        local effectiveVel = Vector3.zero
-        if horizSpeed > 1.2 then
-            effectiveVel = Vector3.new(
-                targetVel.X,
-                math.clamp(targetVel.Y * 0.2, -10, 10),
-                targetVel.Z
-            )
-        end
-
         local flightTime = dist / projSpeed
         local predictedPos = targetPos
 
-        for _ = 1, 3 do
-            predictedPos = targetPos + (effectiveVel * flightTime)
-            local newDist = (predictedPos - startPos).Magnitude
-            local avgSpeed = projSpeed / (1 + drag * flightTime)
-            flightTime = newDist / math.max(avgSpeed, 50)
+        for _ = 1, 5 do
+            local leadPos = targetPos + (leadVel * flightTime)
+            local toTarget = leadPos - startPos
+            local horizDist = Vector3.new(toTarget.X, 0, toTarget.Z).Magnitude
+            local totalDist = toTarget.Magnitude
+
+            local avgSpeed = projSpeed / (1 + drag * flightTime * 1.15)
+            flightTime = totalDist / math.max(avgSpeed, 40)
+
+            local gravityDrop = 0.5 * projDrop * (flightTime ^ 2)
+            local heightDiff = leadPos.Y - startPos.Y
+            local pitchAngleFactor = math.clamp(1 + (heightDiff / math.max(horizDist, 10)) * 0.12, 0.85, 1.35)
+
+            predictedPos = leadPos + Vector3.new(0, gravityDrop * pitchAngleFactor, 0)
         end
 
-        if not stats.IsProjectile and dist <= flatRange then
-            return predictedPos
-        end
-
-        local effectiveFlightTime = flightTime
-        if not stats.IsProjectile then
-            local excessDist = math.max(0, dist - flatRange)
-            effectiveFlightTime = excessDist / projSpeed
-        end
-
-        local gravityCompensation = 0.5 * projDrop * (effectiveFlightTime ^ 2)
-        return predictedPos + Vector3.new(0, gravityCompensation, 0)
+        return predictedPos
 
     elseif Settings.DistVector_Enabled then
         local distance = (targetPos - startPos).Magnitude
         local distFactor = distance / 100
         local heightOffset = (distFactor * 1.2 + (distFactor ^ 1.85) * 3.8) * Settings.DistVector_UpScale
-        local horizontalVel = Vector3.new(targetVel.X, targetVel.Y * 0.2, targetVel.Z)
+        local horizontalVel = Vector3.new(targetVel.X, 0, targetVel.Z)
         local leadTime = (distFactor * 0.28 + (distFactor ^ 1.35) * 0.18) * Settings.DistVector_StrafeScale
-        local strafeOffset = horizontalVel * leadTime
-
-        return targetPos + strafeOffset + Vector3.new(0, heightOffset, 0)
+        return targetPos + (horizontalVel * leadTime) + Vector3.new(0, heightOffset, 0)
 
     elseif Settings.Prediction_Enabled then
         return targetPos + (targetVel * Settings.Prediction_Value)
@@ -1544,34 +1615,69 @@ local function getTargetPart(character)
     return targetPart
 end
 
--- ОПТИМИЗИРОВАННЫЙ TEAM CHECK С КЭШИРОВАНИЕМ
-local clanKeys = {"Clan", "ClanTag", "ClanName", "Party", "PartyId", "Squad", "TeamId", "Group", "Faction"}
+-- ==========================================
+-- БЕЗОПАСНЫЙ TEAM CHECK (БЕЗ YIELD В РЕНДЕР-ПОТОКЕ)
+-- ==========================================
+local clanKeys = {"Clan", "ClanTag", "ClanName", "Party", "PartyId", "Squad", "TeamId", "Group", "Faction", "Team", "TeamName"}
 
-local function checkIsTeammateRaw(player)
-    if not player or player == LocalPlayer then return false end
+local function isGreenColor(col)
+    if not col then return false end
+    return (col.G > 0.65 and col.R < 0.45 and col.B < 0.45) or (col.G > 0.8 and col.R < 0.55 and col.B < 0.55)
+end
 
+local function getPlayerClanValue(plr)
     for i = 1, #clanKeys do
-        local key = clanKeys[i]
-        local myVal = LocalPlayer:GetAttribute(key)
-        local theirVal = player:GetAttribute(key)
-        if myVal ~= nil and theirVal ~= nil and myVal == theirVal then
-            local s = tostring(myVal)
-            if s ~= "" and s ~= "None" and s ~= "0" then
-                return true
+        local k = clanKeys[i]
+        local attr = plr:GetAttribute(k)
+        if attr ~= nil and tostring(attr) ~= "" and tostring(attr) ~= "None" and tostring(attr) ~= "0" and tostring(attr) ~= "false" then
+            return tostring(attr)
+        end
+    end
+    if plr.Character then
+        for i = 1, #clanKeys do
+            local k = clanKeys[i]
+            local attr = plr.Character:GetAttribute(k)
+            if attr ~= nil and tostring(attr) ~= "" and tostring(attr) ~= "None" and tostring(attr) ~= "0" and tostring(attr) ~= "false" then
+                return tostring(attr)
             end
         end
     end
 
-    for i = 1, #clanKeys do
-        local key = clanKeys[i]
-        local myObj = LocalPlayer:FindFirstChild(key)
-        local theirObj = player:FindFirstChild(key)
-        if myObj and theirObj and myObj:IsA("ValueBase") and theirObj:IsA("ValueBase") then
-            local mv = tostring(myObj.Value)
-            if mv ~= "" and mv ~= "None" and mv ~= "0" and myObj.Value == theirObj.Value then
-                return true
+    local containers = {
+        plr,
+        plr:FindFirstChild("leaderstats"),
+        plr:FindFirstChild("Data"),
+        plr:FindFirstChild("Stats"),
+        plr:FindFirstChild("PlayerData"),
+        plr.Character
+    }
+    for _, cont in pairs(containers) do
+        if cont then
+            for i = 1, #clanKeys do
+                local obj = cont:FindFirstChild(clanKeys[i])
+                if obj and obj:IsA("ValueBase") then
+                    local val = tostring(obj.Value)
+                    if val ~= "" and val ~= "None" and val ~= "0" and val ~= "false" then
+                        return val
+                    end
+                end
             end
         end
+    end
+    return nil
+end
+
+local function checkIsTeammateRaw(player)
+    if not player or player == LocalPlayer then return false end
+
+    if State.manualTeammates[player.Name] or State.manualTeammates[player.DisplayName] then
+        return true
+    end
+
+    local myClan = getPlayerClanValue(LocalPlayer)
+    local theirClan = getPlayerClanValue(player)
+    if myClan and theirClan and myClan == theirClan then
+        return true
     end
 
     if LocalPlayer.Team ~= nil and player.Team ~= nil and not LocalPlayer.Neutral and not player.Neutral then
@@ -1583,31 +1689,36 @@ local function checkIsTeammateRaw(player)
                     sameTeamCount = sameTeamCount + 1
                 end
             end
-            if #allPlayers > 1 and sameTeamCount < #allPlayers * 0.8 then
+            if #allPlayers > 1 and sameTeamCount < #allPlayers * 0.85 then
                 return true
             end
         end
     end
 
     local char = player.Character
-    local head = char and char:FindFirstChild("Head")
-    if head then
-        local children = head:GetChildren()
-        for i = 1, #children do
-            local b = children[i]
-            if b:IsA("BillboardGui") and b.Name ~= "InvCheckUI" and b.Name ~= "FustCarBillboard" then
-                local bChildren = b:GetChildren()
-                for j = 1, #bChildren do
-                    local desc = bChildren[j]
-                    if desc:IsA("TextLabel") or desc:IsA("ImageLabel") then
-                        local col = desc:IsA("TextLabel") and desc.TextColor3 or desc.ImageColor3
-                        if col.G > 0.75 and col.R < 0.35 and col.B < 0.35 then
+    if char then
+        for _, obj in ipairs(char:GetDescendants()) do
+            if obj:IsA("BillboardGui") and obj.Name ~= "InvCheckUI" and obj.Name ~= "FustCarBillboard" then
+                for _, desc in ipairs(obj:GetDescendants()) do
+                    if desc:IsA("TextLabel") and desc.Visible and isGreenColor(desc.TextColor3) then
+                        return true
+                    elseif (desc:IsA("ImageLabel") or desc:IsA("Frame")) and desc.Visible then
+                        local col = desc:IsA("ImageLabel") and desc.ImageColor3 or desc.BackgroundColor3
+                        if isGreenColor(col) then
                             return true
                         end
                     end
                 end
+            elseif obj:IsA("Highlight") and obj.Name ~= "FustCarHighlight" and obj.Enabled then
+                if isGreenColor(obj.FillColor) or isGreenColor(obj.OutlineColor) then
+                    return true
+                end
             end
         end
+    end
+
+    if State.robloxFriendsCache[player] then
+        return true
     end
 
     return false
@@ -1615,9 +1726,12 @@ end
 
 local function isPlayerTeammateCached(player)
     if not player or player == LocalPlayer then return false end
+    if State.manualTeammates[player.Name] or State.manualTeammates[player.DisplayName] then
+        return true
+    end
     local now = tick()
     local cached = State.teamCheckCache[player]
-    if cached and (now - cached.Time) < 0.5 then
+    if cached and (now - cached.Time) < 0.6 then
         return cached.Result
     end
     local res = checkIsTeammateRaw(player)
@@ -1626,6 +1740,9 @@ local function isPlayerTeammateCached(player)
 end
 
 local function isTeammate(player)
+    if State.manualTeammates[player.Name] or State.manualTeammates[player.DisplayName] then
+        return true
+    end
     if not Settings.TeamCheck then return false end
     return isPlayerTeammateCached(player)
 end
@@ -2249,7 +2366,7 @@ mt.__index = newcclosure(function(t, k)
             if (k_lower == "target" or k_lower == "hit" or k_lower == "x" or k_lower == "y" or k_lower == "unitray") and State.LockedTarget then
                 local chance = CalculateChance(Settings.HitChance)
                 if chance then
-                    local originPos = (Settings.SmartBallistics_Enabled and findWeaponMuzzlePosition()) or (Camera and Camera.CFrame.Position) or Vector3.zero
+                    local originPos = (Camera and Camera.CFrame.Position) or Vector3.zero
                     local targetPos = getPredictedTargetPosition(State.LockedTarget, originPos)
 
                     if k_lower == "target" then 
@@ -2737,6 +2854,7 @@ end
 
 local function setupESP(player)
     if player == LocalPlayer then return end
+    cachePlayerFriendStatus(player)
     local function cLine()
         local l = Drawing.new("Line"); l.Visible = false; l.Thickness = 1.5; l.Transparency = 1; return l
     end
@@ -2767,10 +2885,11 @@ table.insert(Connections, Players.PlayerRemoving:Connect(function(player)
     end
     State.memoryInventory[player] = nil
     State.teamCheckCache[player] = nil
+    State.robloxFriendsCache[player] = nil
 end))
 
 -- ==============================================================================
--- LINORIALIB ИНТЕРФЕЙС И ИНТЕРАКТИВНЫЙ 2D ESP PREVIEW (С DRAG & DROP)
+-- LINORIALIB ИНТЕРФЕЙС И ИНТЕРАКТИВНЫЙ 2D ESP PREVIEW
 -- ==============================================================================
 local Window = Library:CreateWindow({
     Title = 'Skeetparser by Fliriz',
@@ -2786,7 +2905,6 @@ local Preview = {
     draggingElem = nil,
     dragStartMouse = Vector2.zero,
     dragStartOffset = Vector2.zero,
-    -- Координаты референсного бокса внутри превью: CenterX = 99, TopY = 78, Width = 108, Height = 196
     RefCenterX = 99,
     RefTopY = 78,
     RefW = 108,
@@ -2795,22 +2913,18 @@ local Preview = {
 
 local function applyPreviewPositionsFromLayout()
     local L = State.ESP_Layout
-    -- 1. Никнейм
     local nameCenterX = Preview.RefCenterX + (L.Name_X * Preview.RefW)
     local nameTopY = Preview.RefTopY + (L.Name_Y * Preview.RefH)
     Preview.NameText.Position = UDim2.fromOffset(nameCenterX - 70, nameTopY)
 
-    -- 2. Полоска HP
     local hpBarX = Preview.RefCenterX + (L.HpBar_X * Preview.RefW)
     local hpBarY = Preview.RefTopY + (L.HpBar_Y * Preview.RefH)
     Preview.HpBg.Position = UDim2.fromOffset(hpBarX, hpBarY)
 
-    -- 3. Текст HP
     local hpTxtX = Preview.RefCenterX + (L.HpText_X * Preview.RefW)
     local hpTxtY = Preview.RefTopY + (L.HpText_Y * Preview.RefH)
     Preview.HpText.Position = UDim2.fromOffset(hpTxtX - 18, hpTxtY)
 
-    -- 4. Иконки инвентаря (Inv ESP)
     local invCenterX = Preview.RefCenterX + (L.Inv_X * Preview.RefW)
     local invTopY = Preview.RefTopY + (L.Inv_Y * Preview.RefH)
     Preview.InvContainer.Position = UDim2.fromOffset(invCenterX - 90, invTopY)
@@ -2962,7 +3076,6 @@ do
     makeBone(99, 185, 86, 240)
     makeBone(99, 185, 112, 240)
 
-    -- Перетаскиваемый Никнейм
     Preview.NameText = Instance.new("TextLabel")
     Preview.NameText.Size = UDim2.fromOffset(140, 18)
     Preview.NameText.BackgroundTransparency = 1
@@ -2975,7 +3088,6 @@ do
     Preview.NameText.Visible = false
     Preview.NameText.Parent = Preview.Canvas
 
-    -- Перетаскиваемая Полоска HP
     Preview.HpBg = Instance.new("Frame")
     Preview.HpBg.Size = UDim2.fromOffset(6, 196)
     Preview.HpBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
@@ -2991,7 +3103,6 @@ do
     hpFill.BorderSizePixel = 0
     hpFill.Parent = Preview.HpBg
 
-    -- Перетаскиваемый Текст HP
     Preview.HpText = Instance.new("TextLabel")
     Preview.HpText.Size = UDim2.fromOffset(36, 16)
     Preview.HpText.BackgroundTransparency = 1
@@ -3004,7 +3115,6 @@ do
     Preview.HpText.Visible = false
     Preview.HpText.Parent = Preview.Canvas
 
-    -- Перетаскиваемый контейнер Inv ESP
     Preview.InvContainer = Instance.new("Frame")
     Preview.InvContainer.Size = UDim2.fromOffset(180, 42)
     Preview.InvContainer.BackgroundTransparency = 1
@@ -3047,7 +3157,6 @@ do
 
     applyPreviewPositionsFromLayout()
 
-    -- Обработчики перетаскивания (Drag & Drop) для элементов ESP Preview
     local function bindDraggable(guiObj, elemKey)
         guiObj.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -3109,7 +3218,6 @@ do
     end))
 end
 
--- Точная проверка открытости меню LinoriaLib
 local function isLinoriaMenuOpen()
     local mainFrame = (Window and Window.Holder) or (Window and Window.Root)
     if mainFrame then
@@ -3143,9 +3251,9 @@ local function updateEspPreview()
         end
     end)
 
-    local espCol = Settings.ESP_Color
+    local espCol = Settings.ESP_Color or Color3.fromRGB(255, 80, 80)
     local chamsOn = Settings.Local_Chams_Enabled
-    local chamsCol = chamsOn and Settings.Local_Chams_Color or Color3.fromRGB(95, 98, 110)
+    local chamsCol = (chamsOn and Settings.Local_Chams_Color) or Color3.fromRGB(95, 98, 110)
 
     for _, part in ipairs(Preview.dummyParts) do
         part.BackgroundColor3 = chamsCol
@@ -3208,7 +3316,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    if Settings.Fust_BulletTracer_Enabled or Settings.SmartBallistics_Enabled then
+    if Settings.Fust_BulletTracer_Enabled then
         local now = tick()
         local safeDt = math.max(dt, 0.001)
 
@@ -3233,15 +3341,12 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                         if cData.ConfirmedFrames >= 1 then
                             State.trackedProjectiles[part] = {
                                 LastPos = cData.LastPos,
-                                LastVelY = (stepVec / safeDt).Y,
-                                SpeedSample = math.clamp(measuredSpeed, 150, 3000),
-                                WeaponName = cData.WeaponName or getEquippedWeaponNameAndInstance(),
                                 SpawnTime = now
                             }
                             State.candidateProjectiles[part] = nil
                             State.lastFireTimestamp = now
 
-                            if Settings.Fust_BulletTracer_Enabled and stepDist >= 0.15 and stepDist < 80 then
+                            if stepDist >= 0.15 and stepDist < 80 then
                                 drawFustTracerSegment(cData.LastPos, curPos)
                                 State.trackedProjectiles[part].LastPos = curPos
                             end
@@ -3258,26 +3363,9 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 State.trackedProjectiles[part] = nil
             else
                 local curPos = part.Position
-                local stepVec = curPos - data.LastPos
-                local stepDist = stepVec.Magnitude
+                local stepDist = (curPos - data.LastPos).Magnitude
                 if stepDist >= 0.15 and stepDist < 140 then
-                    local curVelY = (stepVec / safeDt).Y
-                    if data.LastVelY and data.WeaponName then
-                        local measuredDrop = math.clamp(-(curVelY - data.LastVelY) / safeDt, 0, 150)
-                        local basePreset = classifyWeaponByName(data.WeaponName) or WEAPON_CLASS_PRESETS.Pistol
-                        State.learnedWeaponBallistics[data.WeaponName] = {
-                            Speed = data.SpeedSample * 0.6 + basePreset.Speed * 0.4,
-                            Drop = measuredDrop > 35 and (measuredDrop * 0.5 + basePreset.Drop * 0.5) or basePreset.Drop,
-                            Drag = basePreset.Drag,
-                            FlatRange = basePreset.FlatRange,
-                            IsProjectile = basePreset.IsProjectile
-                        }
-                    end
-                    data.LastVelY = curVelY
-
-                    if Settings.Fust_BulletTracer_Enabled then
-                        drawFustTracerSegment(data.LastPos, curPos)
-                    end
+                    drawFustTracerSegment(data.LastPos, curPos)
                     data.LastPos = curPos
                 end
             end
@@ -3401,22 +3489,15 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
 
     if Settings.Aimbot_Enabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) and State.LockedTarget then
         pcall(function()
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            if hum and isPlayerSittingInVehicle(hum) then
-                if Camera.CameraType ~= Enum.CameraType.Custom and Camera.CameraType ~= Enum.CameraType.Scriptable then
-                    Camera.CameraType = Enum.CameraType.Custom
-                end
-            end
-
-            local muzzleOrig = Settings.SmartBallistics_Enabled and findWeaponMuzzlePosition() or Camera.CFrame.Position
-            local aimPos = getPredictedTargetPosition(State.LockedTarget, muzzleOrig)
-            local targetCF = CFrame.lookAt(Camera.CFrame.Position, aimPos)
+            local camPos = Camera.CFrame.Position
+            local aimPos = getPredictedTargetPosition(State.LockedTarget, camPos)
+            local targetCF = CFrame.lookAt(camPos, aimPos)
 
             local alpha
             if Settings.Aimbot_Smoothness >= 0.99 then
                 alpha = 1
             else
-                local speed = (Settings.Aimbot_Smoothness ^ 1.35) * 42
+                local speed = (Settings.Aimbot_Smoothness ^ 1.35) * 45
                 alpha = 1 - math.exp(-speed * math.clamp(dt, 0.001, 0.1))
             end
 
@@ -3430,8 +3511,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
             local currentSize = Settings.Crosshair_Size
 
             if (Settings.Aimbot_Enabled or Settings.SilentAim_Enabled) and State.LockedTarget then
-                local muzzleOrig = Settings.SmartBallistics_Enabled and findWeaponMuzzlePosition() or Camera.CFrame.Position
-                local predWorldPos = getPredictedTargetPosition(State.LockedTarget, muzzleOrig)
+                local predWorldPos = getPredictedTargetPosition(State.LockedTarget, Camera.CFrame.Position)
                 local tPos, tOnScreen = Camera:WorldToViewportPoint(predWorldPos)
                 if tOnScreen then
                     basePos = Vector2.new(tPos.X, tPos.Y)
@@ -3439,7 +3519,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 end
             end
 
-            local cColor = Settings.Crosshair_RGB and Color3.fromHSV((tick() % 3) / 3, 1, 1) or Settings.Crosshair_Color
+            local cColor = Settings.Crosshair_RGB and Color3.fromHSV((tick() % 3) / 3, 1, 1) or (Settings.Crosshair_Color or Color3.fromRGB(0, 255, 128))
             State.crosshairText.Visible = true
             State.crosshairText.Position = basePos + Vector2.new(0, currentSize + 10)
             State.crosshairText.Color = cColor
@@ -3464,51 +3544,57 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
     end
 
     local L = State.ESP_Layout
+    local baseEspColor = Settings.ESP_Color or Color3.fromRGB(255, 80, 80)
+    local teamEspColor = Settings.ESP_TeamColor or Color3.fromRGB(0, 255, 100)
 
-    -- ESP отрисовка на живых игроках (с учетом перетащенных позиций из ESP Preview)
     for player, drawings in pairs(espCache) do
         local character = player.Character
         local isVisible = false
 
-        pcall(function()
-            if Settings.ESP_Enabled and character and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 and character:FindFirstChild("Head") and character:FindFirstChild("HumanoidRootPart") then
-                local head, root = character.Head, character.HumanoidRootPart
-                local humanoid = character.Humanoid
+        if Settings.ESP_Enabled and character then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            local head = character:FindFirstChild("Head")
+            local root = character:FindFirstChild("HumanoidRootPart")
+
+            if humanoid and humanoid.Health > 0 and head and root then
                 local isR15 = humanoid.RigType == Enum.HumanoidRigType.R15
-                local torso = isR15 and character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
-                
+                local torso = isR15 and character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso") or root
+
                 if torso then
                     local headPos, onScreen = Camera:WorldToViewportPoint(head.Position)
 
                     if onScreen then
                         isVisible = true
-                        
-                        local playerEspColor = isPlayerTeammateCached(player) and Settings.ESP_TeamColor or Settings.ESP_Color
+
+                        local isMate = isTeammate(player)
+                        local playerEspColor = isMate and teamEspColor or baseEspColor
 
                         local hat = character:FindFirstChild("ClientNeonHat")
                         if Settings.ESP_NeonHat then
                             if not hat then hat = createNeonHat(character) end
                             if hat then hat.Color = playerEspColor; hat.Transparency = 0 end
-                        elseif hat then hat.Transparency = 1 end
+                        elseif hat then
+                            hat.Transparency = 1
+                        end
 
                         local topPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
                         local bottomPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
-                        local boxHeight = math.abs(topPos.Y - bottomPos.Y)
+                        local boxHeight = math.max(math.abs(topPos.Y - bottomPos.Y), 4)
                         local boxWidth = boxHeight / 2
 
                         drawings.MainBox.Size = Vector2.new(boxWidth, boxHeight)
                         drawings.MainBox.Position = Vector2.new(topPos.X - boxWidth / 2, topPos.Y)
-                        drawings.MainBox.Visible = Settings.ESP_Box
                         drawings.MainBox.Color = playerEspColor
+                        drawings.MainBox.Visible = Settings.ESP_Box
 
                         if Settings.ESP_Name then
-                            drawings.NameText.Visible = true
                             drawings.NameText.Text = player.Name
                             drawings.NameText.Position = Vector2.new(
                                 topPos.X + (L.Name_X * boxWidth),
                                 topPos.Y + (L.Name_Y * boxHeight)
                             )
                             drawings.NameText.Color = playerEspColor
+                            drawings.NameText.Visible = true
                         else
                             drawings.NameText.Visible = false
                         end
@@ -3540,24 +3626,24 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                         end
 
                         if Settings.ESP_HealthText then
-                            drawings.HealthText.Visible = true
                             drawings.HealthText.Text = math.floor(humanoid.Health) .. " HP"
                             drawings.HealthText.Position = Vector2.new(
                                 topPos.X + (L.HpText_X * boxWidth),
                                 topPos.Y + (L.HpText_Y * boxHeight)
                             )
                             drawings.HealthText.Color = Color3.fromRGB(255, 255, 255)
+                            drawings.HealthText.Visible = true
                         else
                             drawings.HealthText.Visible = false
                         end
 
                         local hSizeOffset = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, head.Size.Y / 2, 0))
-                        local hBoxHeight = math.abs(headPos.Y - hSizeOffset.Y) * 2
-                        
+                        local hBoxHeight = math.max(math.abs(headPos.Y - hSizeOffset.Y) * 2, 2)
+
                         drawings.HeadBox.Size = Vector2.new(hBoxHeight, hBoxHeight)
                         drawings.HeadBox.Position = Vector2.new(headPos.X - hBoxHeight / 2, headPos.Y - hBoxHeight / 2)
-                        drawings.HeadBox.Visible = Settings.ESP_SkelHead
                         drawings.HeadBox.Color = playerEspColor
+                        drawings.HeadBox.Visible = Settings.ESP_SkelHead
 
                         local function drawBone(line, p1, p2, connectOffset)
                             if p1 and p2 and Settings.ESP_SkelHead then
@@ -3566,15 +3652,15 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                                 if vis1 or vis2 then
                                     line.From = connectOffset and Vector2.new(headPos.X, headPos.Y + hBoxHeight / 2) or Vector2.new(pos1.X, pos1.Y)
                                     line.To = Vector2.new(pos2.X, pos2.Y)
-                                    line.Visible = true
                                     line.Color = playerEspColor
+                                    line.Visible = true
                                     return
                                 end
                             end
                             line.Visible = false
                         end
 
-                        drawBone(drawings.Spine, head, torso, Settings.ESP_SkelHead)
+                        drawBone(drawings.Spine, head, torso, true)
                         drawBone(drawings.LeftArm, torso, isR15 and character:FindFirstChild("LeftLowerArm") or character:FindFirstChild("Left Arm"), false)
                         drawBone(drawings.RightArm, torso, isR15 and character:FindFirstChild("RightLowerArm") or character:FindFirstChild("Right Arm"), false)
                         drawBone(drawings.LeftLeg, isR15 and character:FindFirstChild("LowerTorso") or torso, isR15 and character:FindFirstChild("LeftLowerLeg") or character:FindFirstChild("Left Leg"), false)
@@ -3582,7 +3668,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                     end
                 end
             end
-        end)
+        end
 
         if not isVisible then
             for _, drawing in pairs(drawings) do drawing.Visible = false end
@@ -3667,6 +3753,9 @@ local function destroyLinoriaUI()
         if Preview.Gui then Preview.Gui:Destroy() end
     end)
     pcall(function()
+        if photoGui then photoGui:Destroy() end
+    end)
+    pcall(function()
         if Window and Window.Holder then
             local sg = Window.Holder:FindFirstAncestorOfClass("ScreenGui")
             if sg then sg:Destroy() end
@@ -3705,6 +3794,17 @@ local function destroyLinoriaUI()
             end
         end
     end)
+end
+
+local function getServerPlayerNames()
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(list, p.Name)
+        end
+    end
+    if #list == 0 then table.insert(list, "No Players") end
+    return list
 end
 
 -- Инициализация вкладок меню в отдельных блоках do ... end
@@ -3761,7 +3861,7 @@ do
             Default = false,
             Callback = function(v) Settings.VisCheck_Enabled = v end
         })
-        aimbox:AddToggle('TeamCheck', {
+        local teamToggle = aimbox:AddToggle('TeamCheck', {
             Text = 'Team Check (Green Team ESP)',
             Default = false,
             Callback = function(v)
@@ -3769,6 +3869,27 @@ do
                 table.clear(State.teamCheckCache)
             end
         })
+        teamToggle:AddColorPicker('ESP_TeamColor', {
+            Default = Color3.fromRGB(0, 255, 100),
+            Title = 'Team ESP Color',
+            Callback = function(c) Settings.ESP_TeamColor = c end
+        })
+
+        local teamDrop = aimbox:AddDropdown('ManualTeammates', {
+            Values = getServerPlayerNames(),
+            Default = 1,
+            Multi = true,
+            Text = 'Teammates (Manual Whitelist)',
+            Callback = function(v)
+                State.manualTeammates = v or {}
+                table.clear(State.teamCheckCache)
+            end
+        })
+        aimbox:AddButton('Refresh Player List', function()
+            pcall(function()
+                teamDrop:SetValues(getServerPlayerNames())
+            end)
+        end)
         aimbox:AddDivider()
         aimbox:AddToggle('Aimbot_DistCheck_Enabled', {
             Text = '📏 Distance Check',
@@ -3839,8 +3960,23 @@ do
             Default = true,
             Callback = function(v)
                 Settings.SmartBallistics_Enabled = v
-                setFustBulletTracerState(Settings.Fust_BulletTracer_Enabled)
             end
+        })
+        aimcfg:AddSlider('SmartBallistics_DropScale', {
+            Text = 'Ballistic Drop Scale (Высота дуги)',
+            Default = 1.0,
+            Min = 0.1,
+            Max = 3.0,
+            Rounding = 2,
+            Callback = function(v) Settings.SmartBallistics_DropScale = v end
+        })
+        aimcfg:AddSlider('SmartBallistics_LeadScale', {
+            Text = 'Movement Lead Scale (Упреждение бега)',
+            Default = 1.0,
+            Min = 0.1,
+            Max = 3.0,
+            Rounding = 2,
+            Callback = function(v) Settings.SmartBallistics_LeadScale = v end
         })
         aimcfg:AddDivider()
         aimcfg:AddToggle('DistVector_Enabled', {
@@ -3993,7 +4129,7 @@ do
         })
         espToggle:AddColorPicker('ESP_Color', {
             Default = Color3.fromRGB(255, 80, 80),
-            Title = 'ESP Visual Color',
+            Title = 'ESP Enemy Color',
             Callback = function(c) Settings.ESP_Color = c end
         })
 
@@ -4102,6 +4238,14 @@ do
             Default = Color3.fromRGB(0, 170, 255),
             Title = 'Tracer Color',
             Callback = function(c) Settings.Tracer_Color = c end
+        })
+
+        envbox:AddToggle('Fust_Photo_Enabled', {
+            Text = 'Show Bottom-Right Photo (Фото)',
+            Default = true,
+            Callback = function(v)
+                updatePhotoVisibility(v)
+            end
         })
 
         envbox:AddToggle('Fust_BulletTracer_Enabled', {
@@ -4378,7 +4522,13 @@ do
             Callback = function(v) Settings.PeakKill_Mode = v end
         })
 
-        peakexbox:AddLabel('Cycle Direction Key'):AddKeyPicker('PeakKill_CycleKey', { Default = 'X', Mode = 'Toggle', Text = 'Cycle Peak Direction' })
+        peakexbox:AddLabel('Cycle Direction Key'):AddKeyPicker('PeakKill_CycleKey', { Default = 'X', Mode = 'Toggle', Text = 'Cycle Peak Direction', Callback = function()
+            pcall(function()
+                if Library.Options and Library.Options.PeakKill_CycleKey then
+                    Settings.PeakKill_CycleKey = Library.Options.PeakKill_CycleKey.Value
+                end
+            end)
+        end })
         peakexbox:AddSlider('PeakKill_Offset', {
             Text = 'Peak Offset Distance',
             Default = 15,
@@ -4551,7 +4701,7 @@ do
         SaveManager:SetLibrary(Library)
 
         SaveManager:IgnoreThemeSettings()
-        SaveManager:SetIgnoreIndexes({ 'MenuKeybind', 'PeakKill_Key', 'TP_Key', 'PeakKill_CycleKey', 'Fust_Speed_Key', 'Fust_Lay_Key', 'Fust_Zoom_Key' })
+        SaveManager:SetIgnoreIndexes({})
 
         ThemeManager:SetFolder('Skeetparser')
         SaveManager:SetFolder('Skeetparser/RandomizerRedux')
@@ -4597,9 +4747,11 @@ Library:OnUnload(function()
     table.clear(State.invUIs)
     table.clear(State.memoryInventory)
     table.clear(State.teamCheckCache)
+    table.clear(State.robloxFriendsCache)
     if State.tracerFolder then State.tracerFolder:Destroy() end
     if State.fustOverlayGui then State.fustOverlayGui:Destroy() end
     if Preview.Gui then Preview.Gui:Destroy() end
+    if photoGui then photoGui:Destroy() end
     
     restoreWalls()
     Settings.NightMode_Enabled = false
