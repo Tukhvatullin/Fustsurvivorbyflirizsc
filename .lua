@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- Skeetparser by Fliriz | Randomizer REDUX + Fust Survival Integration
--- UI Library: LinoriaLib (Galaxy Night Mode, FullBright, True Auto-Ballistics)
+-- UI Library: LinoriaLib (Galaxy Night Mode, FullBright, Interactive ESP Preview)
 -- ==============================================================================
 
 local repo = 'https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/'
@@ -12,7 +12,6 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
-local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 local Lighting = game:GetService("Lighting")
@@ -29,7 +28,7 @@ pcall(function()
 end)
 
 -- ==========================================
--- ГЛОБАЛЬНЫЕ НАСТРОЙКИ (ПО УМОЛЧАНИЮ ВЫКЛЮЧЕНО)
+-- ГЛОБАЛЬНЫЕ НАСТРОЙКИ
 -- ==========================================
 local Settings = {
     Aimbot_Enabled = false,
@@ -45,30 +44,24 @@ local Settings = {
     Aimbot_360 = false,
     Aimbot_HitPart = "Head",
 
-    -- Stick Aim & Distance Check
     Aimbot_StickyAim = false,
     Aimbot_DistCheck_Enabled = true,
     Aimbot_MaxDistance = 800,
     
-    -- Полностью автоматический баллистический векторный аим
     SmartBallistics_Enabled = true,
 
-    -- Векторная наводка от дистанции (Вверх + Вправо/Влево)
     DistVector_Enabled = false,
     DistVector_UpScale = 1.5,
     DistVector_StrafeScale = 1.2,
     
-    -- Стандартная линейная предикция
     Prediction_Enabled = false,
     Prediction_Value = 0.135,
     
-    -- Оружейные функции
     Wallbang_Enabled = false,
     NoSpread_Enabled = false,
     NoRecoil_Enabled = false,
     InfAmmo_Enabled = false,
     
-    -- Кастомизация Chams
     Gun_Chams_Enabled = false,
     Gun_Chams_Color = Color3.fromRGB(0, 255, 128),
     Gun_Chams_Material = "Neon",
@@ -77,7 +70,6 @@ local Settings = {
     Arm_Chams_Color = Color3.fromRGB(0, 170, 255),
     Arm_Chams_Material = "Neon",
     
-    -- Viewmodel Offset
     Viewmodel_Offset_Enabled = false,
     Viewmodel_Offset_X = 0,
     Viewmodel_Offset_Y = 0,
@@ -95,18 +87,18 @@ local Settings = {
     ESP_HealthBar = false,
     ESP_HealthText = false,
     ESP_Color = Color3.fromRGB(255, 80, 80),
+    ESP_TeamColor = Color3.fromRGB(0, 255, 100),
+    ESP_Preview_Enabled = true,
     
     Tracers_Enabled = false,
     Tracer_Color = Color3.fromRGB(0, 170, 255),
     Tracer_Cooldown = 0.1,
     
-    -- Hit & Kill Effects
     HitEffect_Enabled = false,
     HitEffect_Color = Color3.fromRGB(0, 255, 255),
     KillEffect_Enabled = false,
     KillEffect_Color = Color3.fromRGB(200, 220, 255),
     
-    -- Освещение: Galaxy Sky, Night Mode & FullBright
     NightMode_Enabled = false,
     GalaxySky_Enabled = false,
     FullBright_Enabled = false,
@@ -127,7 +119,6 @@ local Settings = {
     Speed_Enabled = false,
     Speed_Value = 16,
     
-    -- Bhop-rage
     BhopRage_Enabled = false,
     BhopRage_Speed = 65,
     
@@ -155,9 +146,6 @@ local Settings = {
     PeakKill_Offset = 15,
     PeakKill_CycleKey = "X",
 
-    -- ==========================================
-    -- НАСТРОЙКИ ФУНКЦИЙ ИЗ FST.LUA
-    -- ==========================================
     Fust_Speed_Enabled = false,
     Fust_Speed_Mode = "Smooth",
     Fust_Speed_Power = 23,
@@ -167,6 +155,7 @@ local Settings = {
     Fust_Spider_Enabled = false,
     Fust_Spider_Speed = 40,
     Fust_InvCheck_Enabled = false,
+    Fust_InvCheck_Size = 24,
     Fust_CarEsp_Enabled = false,
     Fust_NoShake_Enabled = false,
     Fust_NoFog_Enabled = false,
@@ -181,16 +170,32 @@ local SOUND_PRESETS = {
 }
 
 local Connections = {}
-local LockedTarget = nil
-local StickyTarget = nil
-local smoothedTargetVel = {}
-local IsUnloaded = false
-local BulletCharge = 0
-local IsLMBDown = false
-local lastLocalClick = 0
+local espCache = {}
 
--- Группируем переменные состояния в таблицу State, чтобы не превышать лимит 200 local регистров Luau
+-- Все внутренние переменные и интерактивные смещения ESP упакованы в State
 local State = {
+    LockedTarget = nil,
+    StickyTarget = nil,
+    smoothedTargetVel = {},
+    teamCheckCache = {},
+    IsUnloaded = false,
+    BulletCharge = 0,
+    IsLMBDown = false,
+    lastLocalClick = 0,
+    lastHitSoundTime = 0,
+
+    -- Интерактивные смещения элементов ESP (изменяются перетаскиванием в ESP Preview)
+    ESP_Layout = {
+        Name_X = 0,       -- Смещение относительно центра бокса (в долях ширины бокса)
+        Name_Y = -0.09,   -- Смещение относительно верха бокса (в долях высоты бокса)
+        HpBar_X = -0.56,  -- Смещение относительно центра бокса
+        HpBar_Y = 0,      -- Смещение по высоте
+        HpText_X = -0.76, -- Смещение текста HP относительно центра бокса
+        HpText_Y = 0.13,  -- Смещение текста HP относительно верха бокса
+        Inv_X = 0,        -- Смещение InvCheck по горизонтали
+        Inv_Y = -0.30     -- Смещение InvCheck относительно верха бокса
+    },
+
     modifiedParts = {},
     originalGrips = {},
     originalC0s = {},
@@ -200,6 +205,7 @@ local State = {
     cs2SpinAngle = 0,
     cs2SwitchTimer = 0,
     cs2SwitchState = 1,
+    currentAAYaw = 0,
     currentGhost = nil,
     realPosition = nil,
     targetYaw = 0,
@@ -210,87 +216,81 @@ local State = {
     isPeeking = false,
     peekOriginCFrame = nil,
     wasAACS2_Active = false,
-    origProps = {}
+    origProps = {},
+
+    LAY_CAMERA_HEIGHT_BOOST = 2.6,
+    fustRealCFrame = nil,
+    fustRealVelocity = nil,
+    fustIsSpoofed = false,
+    speedAttachment = nil,
+    speedLinearVel = nil,
+    wasSittingLastFrame = false,
+    wasThirdPersonActive = false,
+    savedCameraMode = LocalPlayer.CameraMode,
+    savedMinZoom = LocalPlayer.CameraMinZoomDistance,
+    savedMaxZoom = LocalPlayer.CameraMaxZoomDistance,
+
+    baseGameFOV = 70,
+    currentZoomFOV = 70,
+    isHoldingZoomKey = false,
+    isZoomingProcess = false,
+    savedBaseMouseSens = 1,
+
+    trackedCars = {},
+    espUpdateConn = nil,
+    workspaceAddedConn = nil,
+
+    invUIs = {},
+    lastInvUpdate = 0,
+    memoryInventory = {},
+
+    tracerFolder = nil,
+    lastFireTimestamp = 0,
+    lastMuzzlePos = nil,
+    lastFireDirection = nil,
+    trackedProjectiles = {},
+    candidateProjectiles = {},
+    tracerWorkspaceConn = nil,
+    weaponFireConns = {},
+    hookedSounds = {},
+
+    weaponBallisticsCache = {},
+    learnedWeaponBallistics = {},
+    savedAtmosphereData = {},
+    OrigLighting = {
+        ClockTime = Lighting.ClockTime,
+        Brightness = Lighting.Brightness,
+        Ambient = Lighting.Ambient,
+        OutdoorAmbient = Lighting.OutdoorAmbient,
+        GlobalShadows = Lighting.GlobalShadows,
+        FogEnd = Lighting.FogEnd,
+        FogStart = Lighting.FogStart
+    }
 }
 
--- Сохраняем исходные параметры освещения карты
-local OrigLighting = {
-    ClockTime = Lighting.ClockTime,
-    Brightness = Lighting.Brightness,
-    Ambient = Lighting.Ambient,
-    OutdoorAmbient = Lighting.OutdoorAmbient,
-    GlobalShadows = Lighting.GlobalShadows,
-    FogEnd = Lighting.FogEnd,
-    FogStart = Lighting.FogStart
-}
-
-local savedAtmosphereData = {}
-local function cacheAtmosphere()
+do
     for _, child in ipairs(Lighting:GetChildren()) do
-        if child:IsA("Atmosphere") and not savedAtmosphereData[child] then
-            savedAtmosphereData[child] = {
+        if child:IsA("Atmosphere") and not State.savedAtmosphereData[child] then
+            State.savedAtmosphereData[child] = {
                 Density = child.Density,
                 Haze = child.Haze,
                 Glare = child.Glare
             }
         end
     end
-end
-cacheAtmosphere()
 
--- ==========================================
--- ПЕРЕМЕННЫЕ И ФУНКЦИИ ИЗ FST.LUA
--- ==========================================
-local LAY_CAMERA_HEIGHT_BOOST = 2.6
-local fustRealCFrame = nil
-local fustRealVelocity = nil
-local fustIsSpoofed = false
-
-local speedAttachment = nil
-local speedLinearVel = nil
-local wasSittingLastFrame = false
-local wasThirdPersonActive = false
-local savedCameraMode = LocalPlayer.CameraMode
-local savedMinZoom = LocalPlayer.CameraMinZoomDistance
-local savedMaxZoom = LocalPlayer.CameraMaxZoomDistance
-
-local baseGameFOV = 70
-local currentZoomFOV = 70
-local isHoldingZoomKey = false
-local isZoomingProcess = false
-local savedBaseMouseSens = 1
-
-local trackedCars = {}
-local espUpdateConn = nil
-local workspaceAddedConn = nil
-
-local invUIs = {}
-local lastInvUpdate = 0
-local memoryInventory = {}
-
-local tracerFolder = nil
-local lastFireTimestamp = 0
-local lastMuzzlePos = nil
-local lastFireDirection = nil
-local trackedProjectiles = {}
-local candidateProjectiles = {}
-local tracerWorkspaceConn = nil
-local weaponFireConns = {}
-local hookedSounds = {}
-
-do
     local oldTracerFolder = workspace:FindFirstChild("FustBulletTracers")
     if oldTracerFolder then oldTracerFolder:Destroy() end
-    tracerFolder = Instance.new("Folder")
-    tracerFolder.Name = "FustBulletTracers"
-    tracerFolder.Parent = workspace
-end
+    State.tracerFolder = Instance.new("Folder")
+    State.tracerFolder.Name = "FustBulletTracers"
+    State.tracerFolder.Parent = workspace
 
-local fustOverlayGui = Instance.new("ScreenGui")
-fustOverlayGui.Name = "FustOverlayGui"
-fustOverlayGui.ResetOnSpawn = false
-if not pcall(function() fustOverlayGui.Parent = CoreGui end) then
-    fustOverlayGui.Parent = PlayerGui
+    State.fustOverlayGui = Instance.new("ScreenGui")
+    State.fustOverlayGui.Name = "FustOverlayGui"
+    State.fustOverlayGui.ResetOnSpawn = false
+    if not pcall(function() State.fustOverlayGui.Parent = CoreGui end) then
+        State.fustOverlayGui.Parent = PlayerGui
+    end
 end
 
 local function tiltHeadDown(character)
@@ -332,75 +332,73 @@ local function getSeatedVehicleModel(character)
 end
 
 local function cleanupSpeedConstraints()
-    if speedLinearVel then speedLinearVel:Destroy() speedLinearVel = nil end
-    if speedAttachment then speedAttachment:Destroy() speedAttachment = nil end
+    if State.speedLinearVel then State.speedLinearVel:Destroy() State.speedLinearVel = nil end
+    if State.speedAttachment then State.speedAttachment:Destroy() State.speedAttachment = nil end
 end
 
 local function getOrCreateLinearVelocity(hrp)
-    if not speedAttachment or speedAttachment.Parent ~= hrp or not speedLinearVel or speedLinearVel.Parent ~= hrp then
+    if not State.speedAttachment or State.speedAttachment.Parent ~= hrp or not State.speedLinearVel or State.speedLinearVel.Parent ~= hrp then
         cleanupSpeedConstraints()
-        speedAttachment = Instance.new("Attachment")
-        speedAttachment.Name = "FustSmoothAttachment"
-        speedAttachment.Parent = hrp
+        State.speedAttachment = Instance.new("Attachment")
+        State.speedAttachment.Name = "FustSmoothAttachment"
+        State.speedAttachment.Parent = hrp
 
-        speedLinearVel = Instance.new("LinearVelocity")
-        speedLinearVel.Name = "FustSmoothVelocity"
-        speedLinearVel.Attachment0 = speedAttachment
-        speedLinearVel.RelativeTo = Enum.ActuatorRelativeTo.World
-        speedLinearVel.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
-        speedLinearVel.PrimaryTangentAxis = Vector3.new(1, 0, 0)
-        speedLinearVel.SecondaryTangentAxis = Vector3.new(0, 0, 1)
-        speedLinearVel.MaxForce = 25000
-        speedLinearVel.Enabled = false
-        speedLinearVel.Parent = hrp
+        State.speedLinearVel = Instance.new("LinearVelocity")
+        State.speedLinearVel.Name = "FustSmoothVelocity"
+        State.speedLinearVel.Attachment0 = State.speedAttachment
+        State.speedLinearVel.RelativeTo = Enum.ActuatorRelativeTo.World
+        State.speedLinearVel.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
+        State.speedLinearVel.PrimaryTangentAxis = Vector3.new(1, 0, 0)
+        State.speedLinearVel.SecondaryTangentAxis = Vector3.new(0, 0, 1)
+        State.speedLinearVel.MaxForce = 25000
+        State.speedLinearVel.Enabled = false
+        State.speedLinearVel.Parent = hrp
     end
-    return speedLinearVel
+    return State.speedLinearVel
 end
 
--- ЛОГИКА FUST HOLD-ZOOM (РАБОТАЕТ С ОРУЖИЕМ В РУКАХ)
 local function startZoomHold()
-    if not Settings.Fust_Zoom_Enabled or isHoldingZoomKey then return end
+    if not Settings.Fust_Zoom_Enabled or State.isHoldingZoomKey then return end
     Camera = workspace.CurrentCamera
-    if not isZoomingProcess then
+    if not State.isZoomingProcess then
         local curFov = Camera and Camera.FieldOfView or 70
-        baseGameFOV = (curFov > 35) and curFov or 70
-        currentZoomFOV = curFov
-        savedBaseMouseSens = math.clamp(UserInputService.MouseDeltaSensitivity, 0.05, 10)
+        State.baseGameFOV = (curFov > 35) and curFov or 70
+        State.currentZoomFOV = curFov
+        State.savedBaseMouseSens = math.clamp(UserInputService.MouseDeltaSensitivity, 0.05, 10)
     end
-    isHoldingZoomKey = true
-    isZoomingProcess = true
+    State.isHoldingZoomKey = true
+    State.isZoomingProcess = true
 end
 
 local function stopZoomHold()
-    if not isHoldingZoomKey then return end
-    isHoldingZoomKey = false
-    UserInputService.MouseDeltaSensitivity = savedBaseMouseSens
+    if not State.isHoldingZoomKey then return end
+    State.isHoldingZoomKey = false
+    UserInputService.MouseDeltaSensitivity = State.savedBaseMouseSens
 end
 
 RunService:BindToRenderStep("FustZoomOverride", Enum.RenderPriority.Last.Value + 50, function(dt)
-    if IsUnloaded or not Settings.Fust_Zoom_Enabled or not isZoomingProcess then return end
+    if State.IsUnloaded or not Settings.Fust_Zoom_Enabled or not State.isZoomingProcess then return end
     Camera = workspace.CurrentCamera
     if not Camera then return end
 
-    if isHoldingZoomKey then
-        currentZoomFOV = currentZoomFOV + (Settings.Fust_Zoom_FOV - currentZoomFOV) * math.clamp(dt * 18, 0, 1)
-        Camera.FieldOfView = currentZoomFOV
-        UserInputService.MouseDeltaSensitivity = savedBaseMouseSens * (currentZoomFOV / math.max(baseGameFOV, 1))
+    if State.isHoldingZoomKey then
+        State.currentZoomFOV = State.currentZoomFOV + (Settings.Fust_Zoom_FOV - State.currentZoomFOV) * math.clamp(dt * 18, 0, 1)
+        Camera.FieldOfView = State.currentZoomFOV
+        UserInputService.MouseDeltaSensitivity = State.savedBaseMouseSens * (State.currentZoomFOV / math.max(State.baseGameFOV, 1))
     else
-        currentZoomFOV = currentZoomFOV + (baseGameFOV - currentZoomFOV) * math.clamp(dt * 20, 0, 1)
-        Camera.FieldOfView = currentZoomFOV
+        State.currentZoomFOV = State.currentZoomFOV + (State.baseGameFOV - State.currentZoomFOV) * math.clamp(dt * 20, 0, 1)
+        Camera.FieldOfView = State.currentZoomFOV
 
-        if math.abs(currentZoomFOV - baseGameFOV) < 0.25 then
-            Camera.FieldOfView = baseGameFOV
-            UserInputService.MouseDeltaSensitivity = savedBaseMouseSens
-            isZoomingProcess = false
+        if math.abs(State.currentZoomFOV - State.baseGameFOV) < 0.25 then
+            Camera.FieldOfView = State.baseGameFOV
+            UserInputService.MouseDeltaSensitivity = State.savedBaseMouseSens
+            State.isZoomingProcess = false
         end
     end
 end)
 
--- ЛОГИКА FUST NO CAMERA SHAKE
 RunService:BindToRenderStep("FustNoShakeFix", Enum.RenderPriority.Camera.Value + 1, function()
-    if IsUnloaded or not Settings.Fust_NoShake_Enabled then return end
+    if State.IsUnloaded or not Settings.Fust_NoShake_Enabled then return end
     local currentCF = Camera.CFrame
     local x, y, z = currentCF:ToOrientation()
     if math.abs(z) > 0.001 then
@@ -408,7 +406,6 @@ RunService:BindToRenderStep("FustNoShakeFix", Enum.RenderPriority.Camera.Value +
     end
 end)
 
--- ЛОГИКА FUST LAY
 local function setFustLayState(state)
     Settings.Fust_Lay_Enabled = state
     local character = LocalPlayer.Character
@@ -416,27 +413,27 @@ local function setFustLayState(state)
     local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 
     if not state then
-        if rootPart and fustIsSpoofed and fustRealCFrame then
-            rootPart.CFrame = fustRealCFrame
-            if fustRealVelocity then rootPart.AssemblyLinearVelocity = fustRealVelocity end
+        if rootPart and State.fustIsSpoofed and State.fustRealCFrame then
+            rootPart.CFrame = State.fustRealCFrame
+            if State.fustRealVelocity then rootPart.AssemblyLinearVelocity = State.fustRealVelocity end
         end
         if humanoid then humanoid.CameraOffset = Vector3.zero end
-        fustIsSpoofed = false
-        fustRealCFrame = nil
-        fustRealVelocity = nil
+        State.fustIsSpoofed = false
+        State.fustRealCFrame = nil
+        State.fustRealVelocity = nil
     else
-        fustIsSpoofed = false
+        State.fustIsSpoofed = false
     end
 end
 
 RunService:BindToRenderStep("FustLayCameraFix", Enum.RenderPriority.Camera.Value + 10, function()
-    if IsUnloaded or not Settings.Fust_Lay_Enabled then return end
+    if State.IsUnloaded or not Settings.Fust_Lay_Enabled then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or isPlayerSittingInVehicle(hum) then return end
 
-    local basePos = (fustRealCFrame and fustRealCFrame.Position) or hrp.Position
+    local basePos = (State.fustRealCFrame and State.fustRealCFrame.Position) or hrp.Position
     local minSafeCameraY = basePos.Y + 1.2
 
     if not Settings.TP_Enabled and Camera.CFrame.Position.Y < minSafeCameraY then
@@ -462,12 +459,12 @@ local function drawFustTracerSegment(p0, p1)
     seg.Size = Vector3.new(0.09, 0.09, dist)
     seg.CFrame = CFrame.lookAt((p0 + p1) * 0.5, p1)
     seg.Transparency = 0.05
-    seg.Parent = tracerFolder
+    seg.Parent = State.tracerFolder
 
     task.spawn(function()
         local lifeTime = 1.8
         local elapsed = 0
-        while elapsed < lifeTime and seg.Parent and not IsUnloaded do
+        while elapsed < lifeTime and seg.Parent and not State.IsUnloaded do
             local dt = RunService.RenderStepped:Wait()
             elapsed = elapsed + dt
             local progress = elapsed / lifeTime
@@ -540,15 +537,15 @@ local function simulateBallisticTrajectory(startPos, direction, initialSpeed, bu
         local gravity = Vector3.new(0, -(bulletDrop or 65), 0)
 
         local rayParams = RaycastParams.new()
-        rayParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera, tracerFolder}
+        rayParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera, State.tracerFolder}
         rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
         local elapsed = 0
-        while elapsed < 2.2 and Settings.Fust_BulletTracer_Enabled and not IsUnloaded do
+        while elapsed < 2.2 and Settings.Fust_BulletTracer_Enabled and not State.IsUnloaded do
             local dt = RunService.RenderStepped:Wait()
             elapsed = elapsed + dt
 
-            if next(trackedProjectiles) ~= nil and elapsed < 0.25 then
+            if next(State.trackedProjectiles) ~= nil and elapsed < 0.25 then
                 break
             end
 
@@ -569,23 +566,23 @@ local function simulateBallisticTrajectory(startPos, direction, initialSpeed, bu
 end
 
 local function onFireDetected(customOrigin, customDir, customSpeed, isBowRelease)
-    if not Settings.Fust_BulletTracer_Enabled or IsUnloaded then return end
+    if not Settings.Fust_BulletTracer_Enabled or State.IsUnloaded then return end
     local now = tick()
-    if now - lastFireTimestamp < 0.03 then return end
-    lastFireTimestamp = now
+    if now - State.lastFireTimestamp < 0.03 then return end
+    State.lastFireTimestamp = now
 
-    lastMuzzlePos = customOrigin or findWeaponMuzzlePosition()
-    lastFireDirection = customDir or Camera.CFrame.LookVector
+    State.lastMuzzlePos = customOrigin or findWeaponMuzzlePosition()
+    State.lastFireDirection = customDir or Camera.CFrame.LookVector
 
     local holdingBow = isBowRelease or isHoldingBowWeapon()
     local fireId = now
 
     local waitDelay = holdingBow and 0.075 or 0.035
     task.delay(waitDelay, function()
-        if Settings.Fust_BulletTracer_Enabled and not IsUnloaded and lastFireTimestamp == fireId and next(trackedProjectiles) == nil then
+        if Settings.Fust_BulletTracer_Enabled and not State.IsUnloaded and State.lastFireTimestamp == fireId and next(State.trackedProjectiles) == nil then
             local spd = customSpeed or (holdingBow and 320 or 900)
             local drop = holdingBow and 85 or 55
-            simulateBallisticTrajectory(lastMuzzlePos, lastFireDirection, spd, drop)
+            simulateBallisticTrajectory(State.lastMuzzlePos, State.lastFireDirection, spd, drop)
         end
     end)
 end
@@ -615,7 +612,7 @@ end
 
 local function isPotentialProjectile(inst)
     if not inst:IsA("BasePart") then return false end
-    if inst.Parent == tracerFolder then return false end
+    if inst.Parent == State.tracerFolder then return false end
     if inst:IsA("Terrain") then return false end
     if LocalPlayer.Character and inst:IsDescendantOf(LocalPlayer.Character) then return false end
     if Camera and inst:IsDescendantOf(Camera) then return false end
@@ -638,20 +635,17 @@ local function isPotentialProjectile(inst)
 
     local isSmallPart = (inst.Size.X < 3.0 and inst.Size.Y < 3.0 and inst.Size.Z < 14.0)
     local camPos = Camera and Camera.CFrame.Position or Vector3.zero
-    local muzzlePos = lastMuzzlePos or camPos
+    local muzzlePos = State.lastMuzzlePos or camPos
     local distFromShooter = math.min((inst.Position - muzzlePos).Magnitude, (inst.Position - camPos).Magnitude)
 
     if isNamedProj and distFromShooter < 50 then return true end
-    if isSmallPart and distFromShooter < 22 and (tick() - lastFireTimestamp) < 0.55 then return true end
+    if isSmallPart and distFromShooter < 22 and (tick() - State.lastFireTimestamp) < 0.55 then return true end
     return false
 end
 
 -- ==========================================
--- УМНЫЙ АВТО-ДЕТЕКТОР БАЛЛИСТИКИ И САМООБУЧЕНИЕ ПО СНАРЯДАМ
+-- УМНЫЙ АВТО-ДЕТЕКТОР БАЛЛИСТИКИ
 -- ==========================================
-local weaponBallisticsCache = {}
-local learnedWeaponBallistics = {}
-
 local WEAPON_CLASS_PRESETS = {
     Bow      = { Speed = 480,  Drop = 28, Drag = 0.015, FlatRange = 30,  IsProjectile = true  },
     Crossbow = { Speed = 550,  Drop = 24, Drag = 0.015, FlatRange = 35,  IsProjectile = true  },
@@ -758,12 +752,12 @@ end
 local function getActiveWeaponBallistics()
     local weaponName, activeTool = getEquippedWeaponNameAndInstance()
 
-    if learnedWeaponBallistics[weaponName] then
-        return learnedWeaponBallistics[weaponName]
+    if State.learnedWeaponBallistics[weaponName] then
+        return State.learnedWeaponBallistics[weaponName]
     end
 
-    if weaponBallisticsCache[weaponName] then
-        return weaponBallisticsCache[weaponName]
+    if State.weaponBallisticsCache[weaponName] then
+        return State.weaponBallisticsCache[weaponName]
     end
 
     local preset = classifyWeaponByName(weaponName)
@@ -800,23 +794,23 @@ local function getActiveWeaponBallistics()
         FlatRange = finalFlatRange,
         IsProjectile = isProj
     }
-    weaponBallisticsCache[weaponName] = result
+    State.weaponBallisticsCache[weaponName] = result
     return result
 end
 
 local function registerCandidateProjectile(obj)
-    if (not Settings.Fust_BulletTracer_Enabled and not Settings.SmartBallistics_Enabled) or IsUnloaded then return end
+    if (not Settings.Fust_BulletTracer_Enabled and not Settings.SmartBallistics_Enabled) or State.IsUnloaded then return end
     local part = nil
     if obj:IsA("BasePart") then
         part = obj
     elseif obj:IsA("Model") then
         part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
     end
-    if not part or trackedProjectiles[part] or candidateProjectiles[part] then return end
+    if not part or State.trackedProjectiles[part] or State.candidateProjectiles[part] then return end
 
     if isPotentialProjectile(part) then
         local wName = getEquippedWeaponNameAndInstance()
-        candidateProjectiles[part] = {
+        State.candidateProjectiles[part] = {
             LastPos = part.Position,
             LastVelY = nil,
             SpawnTime = tick(),
@@ -845,18 +839,18 @@ end
 
 local function hookSingleDescendant(desc)
     if not desc then return end
-    if desc:IsA("Sound") and not hookedSounds[desc] then
+    if desc:IsA("Sound") and not State.hookedSounds[desc] then
         local pName = desc.Parent and desc.Parent.Name or ""
         if isActualFireSoundName(desc.Name, pName) then
-            hookedSounds[desc] = true
+            State.hookedSounds[desc] = true
             local c1 = desc.Played:Connect(function()
                 if Settings.Fust_BulletTracer_Enabled then onFireDetected() end
             end)
             local c2 = desc:GetPropertyChangedSignal("Playing"):Connect(function()
                 if Settings.Fust_BulletTracer_Enabled and desc.Playing then onFireDetected() end
             end)
-            table.insert(weaponFireConns, c1)
-            table.insert(weaponFireConns, c2)
+            table.insert(State.weaponFireConns, c1)
+            table.insert(State.weaponFireConns, c2)
         end
     elseif desc:IsA("ParticleEmitter") then
         local n = desc.Name:lower()
@@ -865,7 +859,7 @@ local function hookSingleDescendant(desc)
             local c = desc:GetPropertyChangedSignal("Enabled"):Connect(function()
                 if Settings.Fust_BulletTracer_Enabled and desc.Enabled then onFireDetected() end
             end)
-            table.insert(weaponFireConns, c)
+            table.insert(State.weaponFireConns, c)
         end
     end
 end
@@ -877,7 +871,7 @@ local function hookWeaponFireEffects(rootContainer)
     end
 
     local conn = rootContainer.DescendantAdded:Connect(function(desc)
-        if not Settings.Fust_BulletTracer_Enabled or IsUnloaded then return end
+        if not Settings.Fust_BulletTracer_Enabled or State.IsUnloaded then return end
         hookSingleDescendant(desc)
 
         local n = desc.Name:lower()
@@ -892,38 +886,38 @@ local function hookWeaponFireEffects(rootContainer)
             onFireDetected()
         end
     end)
-    table.insert(weaponFireConns, conn)
+    table.insert(State.weaponFireConns, conn)
 end
 
 local function setFustBulletTracerState(state)
     Settings.Fust_BulletTracer_Enabled = state
 
-    for _, c in ipairs(weaponFireConns) do
+    for _, c in ipairs(State.weaponFireConns) do
         if c.Connected then c:Disconnect() end
     end
-    table.clear(weaponFireConns)
-    table.clear(hookedSounds)
+    table.clear(State.weaponFireConns)
+    table.clear(State.hookedSounds)
 
     if not state and not Settings.SmartBallistics_Enabled then
-        if tracerWorkspaceConn then tracerWorkspaceConn:Disconnect() tracerWorkspaceConn = nil end
+        if State.tracerWorkspaceConn then State.tracerWorkspaceConn:Disconnect() State.tracerWorkspaceConn = nil end
     end
-    table.clear(trackedProjectiles)
-    table.clear(candidateProjectiles)
+    table.clear(State.trackedProjectiles)
+    table.clear(State.candidateProjectiles)
 
     if state or Settings.SmartBallistics_Enabled then
         if state then
             if LocalPlayer.Character then hookWeaponFireEffects(LocalPlayer.Character) end
             if Camera then hookWeaponFireEffects(Camera) end
         end
-        if not tracerWorkspaceConn then
-            tracerWorkspaceConn = workspace.DescendantAdded:Connect(function(desc)
-                if (not Settings.Fust_BulletTracer_Enabled and not Settings.SmartBallistics_Enabled) or IsUnloaded then return end
+        if not State.tracerWorkspaceConn then
+            State.tracerWorkspaceConn = workspace.DescendantAdded:Connect(function(desc)
+                if (not Settings.Fust_BulletTracer_Enabled and not Settings.SmartBallistics_Enabled) or State.IsUnloaded then return end
                 task.defer(registerCandidateProjectile, desc)
             end)
         end
     end
-    if not state and tracerFolder then
-        tracerFolder:ClearAllChildren()
+    if not state and State.tracerFolder then
+        State.tracerFolder:ClearAllChildren()
     end
 end
 
@@ -957,7 +951,7 @@ local function isVehicleModel(model)
 end
 
 local function createCarESP(carModel)
-    if trackedCars[carModel] then return end
+    if State.trackedCars[carModel] then return end
     local rootPart = carModel.PrimaryPart or carModel:FindFirstChildWhichIsA("VehicleSeat", true) or carModel:FindFirstChildWhichIsA("BasePart", true)
     if not rootPart then return end
 
@@ -969,7 +963,7 @@ local function createCarESP(carModel)
     highlight.FillTransparency = 1
     highlight.OutlineTransparency = 0
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = fustOverlayGui
+    highlight.Parent = State.fustOverlayGui
 
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "FustCarBillboard"
@@ -977,7 +971,7 @@ local function createCarESP(carModel)
     billboard.Size = UDim2.new(0, 170, 0, 40)
     billboard.StudsOffset = Vector3.new(0, 4.5, 0)
     billboard.AlwaysOnTop = true
-    billboard.Parent = fustOverlayGui
+    billboard.Parent = State.fustOverlayGui
 
     local displayName = getRussianVehicleName(carModel.Name)
     local textLabel = Instance.new("TextLabel")
@@ -991,15 +985,15 @@ local function createCarESP(carModel)
     textLabel.TextSize = 13
     textLabel.Parent = billboard
 
-    trackedCars[carModel] = { Highlight = highlight, Billboard = billboard, Label = textLabel, Root = rootPart, RussianName = displayName }
+    State.trackedCars[carModel] = { Highlight = highlight, Billboard = billboard, Label = textLabel, Root = rootPart, RussianName = displayName }
 end
 
 local function clearAllCarESP()
-    for _, data in pairs(trackedCars) do
+    for _, data in pairs(State.trackedCars) do
         if data.Highlight then data.Highlight:Destroy() end
         if data.Billboard then data.Billboard:Destroy() end
     end
-    table.clear(trackedCars)
+    table.clear(State.trackedCars)
 end
 
 local function scanWorkspaceForCars()
@@ -1018,8 +1012,8 @@ local function setFustCarEspState(state)
 
     if state then
         scanWorkspaceForCars()
-        workspaceAddedConn = workspace.DescendantAdded:Connect(function(desc)
-            if not Settings.Fust_CarEsp_Enabled or IsUnloaded then return end
+        State.workspaceAddedConn = workspace.DescendantAdded:Connect(function(desc)
+            if not Settings.Fust_CarEsp_Enabled or State.IsUnloaded then return end
             task.defer(function()
                 if desc:IsA("VehicleSeat") then
                     local carModel = desc:FindFirstAncestorOfClass("Model")
@@ -1030,17 +1024,17 @@ local function setFustCarEspState(state)
             end)
         end)
 
-        espUpdateConn = RunService.RenderStepped:Connect(function()
-            if IsUnloaded or not Settings.Fust_CarEsp_Enabled then return end
+        State.espUpdateConn = RunService.RenderStepped:Connect(function()
+            if State.IsUnloaded or not Settings.Fust_CarEsp_Enabled then return end
             local myChar = LocalPlayer.Character
             local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-            local myPos = (fustRealCFrame and fustRealCFrame.Position) or (myHrp and myHrp.Position) or Camera.CFrame.Position
+            local myPos = (State.fustRealCFrame and State.fustRealCFrame.Position) or (myHrp and myHrp.Position) or Camera.CFrame.Position
 
-            for carModel, data in pairs(trackedCars) do
+            for carModel, data in pairs(State.trackedCars) do
                 if not carModel or not carModel.Parent or not data.Root or not data.Root.Parent then
                     if data.Highlight then data.Highlight:Destroy() end
                     if data.Billboard then data.Billboard:Destroy() end
-                    trackedCars[carModel] = nil
+                    State.trackedCars[carModel] = nil
                 else
                     local dist = math.floor((data.Root.Position - myPos).Magnitude)
                     data.Label.Text = string.format("%s [%d м]", data.RussianName, dist)
@@ -1048,109 +1042,87 @@ local function setFustCarEspState(state)
             end
         end)
     else
-        if workspaceAddedConn then workspaceAddedConn:Disconnect() workspaceAddedConn = nil end
-        if espUpdateConn then espUpdateConn:Disconnect() espUpdateConn = nil end
+        if State.workspaceAddedConn then State.workspaceAddedConn:Disconnect() State.workspaceAddedConn = nil end
+        if State.espUpdateConn then State.espUpdateConn:Disconnect() State.espUpdateConn = nil end
         clearAllCarESP()
     end
 end
 
--- ЛОГИКА FUST INVENTORY ESP
+-- ЛОГИКА FUST INVENTORY ESP (С ПОДДЕРЖКОЙ ПЕРЕТАСКИВАНИЯ ИЗ ESP PREVIEW)
 local function updateInvCheck()
-    if not Settings.Fust_InvCheck_Enabled or IsUnloaded then
-        for _, ui in pairs(invUIs) do if ui then ui:Destroy() end end
-        table.clear(invUIs)
-        table.clear(memoryInventory)
+    if not Settings.Fust_InvCheck_Enabled or State.IsUnloaded then
+        for _, ui in pairs(State.invUIs) do if ui then ui:Destroy() end end
+        table.clear(State.invUIs)
+        table.clear(State.memoryInventory)
         return
     end
 
     local now = tick()
-    if now - lastInvUpdate < 0.3 then return end
-    lastInvUpdate = now
+    if now - State.lastInvUpdate < 0.25 then return end
+    State.lastInvUpdate = now
+
+    local iconSize = Settings.Fust_InvCheck_Size or 24
+    -- Конвертируем смещение из 2D превью в мировые координаты относительно головы игрока
+    local studsX = State.ESP_Layout.Inv_X * 3.5
+    local studsY = 0.5 - (State.ESP_Layout.Inv_Y * 6.5)
 
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("Head") then
-            local armorItems = {}
-            for _, child in ipairs(plr.Character:GetChildren()) do
-                if child:IsA("Accessory") or child:IsA("Model") or child:IsA("Folder") then
-                    local n = child.Name:lower()
-                    if n:find("armor") or n:find("vest") or n:find("helmet") or n:find("броня") or n:find("шлем") or n:find("жилет") or n:find("bag") or n:find("backpack") or n:find("рюкзак") then
-                        table.insert(armorItems, child.Name)
-                    end
-                end
-            end
-            local armorString = #armorItems > 0 and table.concat(armorItems, ", ") or "Нет брони"
-
             local head = plr.Character.Head
-            local ui = invUIs[plr]
+            local ui = State.invUIs[plr]
             
             if not ui or ui.Parent ~= head then
                 if ui then ui:Destroy() end
                 ui = Instance.new("BillboardGui")
                 ui.Name = "InvCheckUI"
                 ui.Adornee = head
-                ui.Size = UDim2.new(0, 300, 0, 130)
-                ui.StudsOffset = Vector3.new(0, 4.0, 0)
+                ui.Size = UDim2.new(0, 220, 0, 70)
+                ui.StudsOffsetWorldSpace = Vector3.new(0, studsY, 0)
+                ui.StudsOffset = Vector3.new(studsX, 0, 0)
                 ui.AlwaysOnTop = true
-
-                local nameLabel = Instance.new("TextLabel")
-                nameLabel.Name = "PlayerName"
-                nameLabel.Size = UDim2.new(1, 0, 0, 20)
-                nameLabel.Position = UDim2.new(0, 0, 0, 0)
-                nameLabel.BackgroundTransparency = 1
-                nameLabel.TextColor3 = Color3.fromRGB(220, 220, 255)
-                nameLabel.TextStrokeTransparency = 0
-                nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-                nameLabel.Font = Enum.Font.GothamBold
-                nameLabel.TextSize = 13
-                nameLabel.Parent = ui
-
-                local armorLabel = Instance.new("TextLabel")
-                armorLabel.Name = "ArmorLabel"
-                armorLabel.Size = UDim2.new(1, 0, 0, 16)
-                armorLabel.Position = UDim2.new(0, 0, 0, 20)
-                armorLabel.BackgroundTransparency = 1
-                armorLabel.TextColor3 = Color3.fromRGB(255, 180, 80)
-                armorLabel.TextStrokeTransparency = 0
-                armorLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-                armorLabel.Font = Enum.Font.GothamSemibold
-                armorLabel.TextSize = 11
-                armorLabel.Parent = ui
 
                 local itemsContainer = Instance.new("Frame")
                 itemsContainer.Name = "ItemsContainer"
-                itemsContainer.Size = UDim2.new(1, 0, 1, -40)
-                itemsContainer.Position = UDim2.new(0, 0, 0, 40)
+                itemsContainer.Size = UDim2.new(1, 0, 1, 0)
+                itemsContainer.Position = UDim2.new(0, 0, 0, 0)
                 itemsContainer.BackgroundTransparency = 1
                 itemsContainer.Parent = ui
 
                 local gridLayout = Instance.new("UIGridLayout")
-                gridLayout.CellSize = UDim2.new(0, 42, 0, 42)
-                gridLayout.CellPadding = UDim2.new(0, 4, 0, 4)
+                gridLayout.Name = "Grid"
+                gridLayout.CellSize = UDim2.new(0, iconSize, 0, iconSize)
+                gridLayout.CellPadding = UDim2.new(0, 3, 0, 3)
                 gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+                gridLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
                 gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
                 gridLayout.Parent = itemsContainer
                 
                 ui.Parent = head
-                invUIs[plr] = ui
+                State.invUIs[plr] = ui
+            else
+                ui.StudsOffsetWorldSpace = Vector3.new(0, studsY, 0)
+                ui.StudsOffset = Vector3.new(studsX, 0, 0)
             end
 
-            ui.PlayerName.Text = "[" .. plr.DisplayName .. "]"
-            ui.ArmorLabel.Text = "Броня: " .. armorString
-            
             local container = ui.ItemsContainer
+            local grid = container:FindFirstChild("Grid")
+            if grid then
+                grid.CellSize = UDim2.new(0, iconSize, 0, iconSize)
+            end
+
             for _, child in ipairs(container:GetChildren()) do
                 if child:IsA("Frame") then child:Destroy() end
             end
 
-            if not memoryInventory[plr] then
-                memoryInventory[plr] = {}
+            if not State.memoryInventory[plr] then
+                State.memoryInventory[plr] = {}
             end
 
             local equippedTool = nil
             for _, child in ipairs(plr.Character:GetChildren()) do
                 if child:IsA("Tool") then
                     equippedTool = child
-                    memoryInventory[plr][child.Name] = true
+                    State.memoryInventory[plr][child.Name] = true
                 end
             end
 
@@ -1158,7 +1130,7 @@ local function updateInvCheck()
             if bp then
                 for _, child in ipairs(bp:GetChildren()) do
                     if child:IsA("Tool") then
-                        memoryInventory[plr][child.Name] = true
+                        State.memoryInventory[plr][child.Name] = true
                     end
                 end
             end
@@ -1168,39 +1140,42 @@ local function updateInvCheck()
                 table.insert(allTools, equippedTool.Name)
             end
             
-            for toolName, _ in pairs(memoryInventory[plr]) do
+            for toolName, _ in pairs(State.memoryInventory[plr]) do
                 if not equippedTool or toolName ~= equippedTool.Name then
                     table.insert(allTools, toolName)
                 end
             end
 
+            local cornerRadius = math.clamp(math.floor(iconSize * 0.18), 2, 6)
+
             for i, toolName in ipairs(allTools) do
                 local isEquipped = equippedTool and (toolName == equippedTool.Name)
                 
                 local slot = Instance.new("Frame")
-                slot.BackgroundColor3 = isEquipped and Color3.fromRGB(50, 120, 255) or Color3.fromRGB(40, 40, 45)
-                slot.BackgroundTransparency = 0.25
+                slot.BackgroundColor3 = isEquipped and Color3.fromRGB(45, 115, 255) or Color3.fromRGB(28, 28, 34)
+                slot.BackgroundTransparency = 0.2
                 slot.BorderSizePixel = 0
                 slot.LayoutOrder = isEquipped and 1 or (i + 1)
                 
                 local corner = Instance.new("UICorner")
-                corner.CornerRadius = UDim.new(0, 6)
+                corner.CornerRadius = UDim.new(0, cornerRadius)
                 corner.Parent = slot
                 
                 if isEquipped then
                     local stroke = Instance.new("UIStroke")
-                    stroke.Color = Color3.fromRGB(150, 210, 255)
-                    stroke.Thickness = 2
+                    stroke.Color = Color3.fromRGB(130, 200, 255)
+                    stroke.Thickness = 1.2
                     stroke.Parent = slot
                 end
 
                 local toolNameLabel = Instance.new("TextLabel")
-                toolNameLabel.Size = UDim2.new(0.9, 0, 0.9, 0)
-                toolNameLabel.Position = UDim2.new(0.05, 0, 0.05, 0)
+                toolNameLabel.Size = UDim2.new(0.92, 0, 0.92, 0)
+                toolNameLabel.Position = UDim2.new(0.04, 0, 0.04, 0)
                 toolNameLabel.BackgroundTransparency = 1
                 toolNameLabel.Text = toolName
                 toolNameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-                toolNameLabel.Font = Enum.Font.Gotham
+                toolNameLabel.TextStrokeTransparency = 0.3
+                toolNameLabel.Font = Enum.Font.GothamSemibold
                 toolNameLabel.TextScaled = true
                 toolNameLabel.TextWrapped = true
                 toolNameLabel.Parent = slot
@@ -1212,40 +1187,29 @@ local function updateInvCheck()
 end
 
 -- ==============================================================================
--- ДВИЖОК ОСВЕЩЕНИЯ: GALAXY SKY, NIGHT MODE, FULLBRIGHT & NO FOG
+-- ДВИЖОК ОСВЕЩЕНИЯ
 -- ==============================================================================
-local function removeGalaxySky()
-    pcall(function()
-        for _, v in pairs(Lighting:GetChildren()) do
-            if v:IsA("Sky") and v.Name == "CustomSky" then
-                v:Destroy()
-            end
-        end
-    end)
-end
-
-local function applyGalaxySky()
-    pcall(function()
-        if Lighting:FindFirstChild("CustomSky") then return end
-        local sky = Instance.new("Sky")
-        sky.Name = "CustomSky"
-        sky.SkyboxBk = "rbxassetid://159454299"
-        sky.SkyboxDn = "rbxassetid://159454296"
-        sky.SkyboxFt = "rbxassetid://159454293"
-        sky.SkyboxLf = "rbxassetid://159454286"
-        sky.SkyboxRt = "rbxassetid://159454300"
-        sky.SkyboxUp = "rbxassetid://159454288"
-        sky.StarCount = 5000
-        sky.Parent = Lighting
-    end)
-end
-
 local function updateLighting()
     pcall(function()
         if Settings.NightMode_Enabled or Settings.GalaxySky_Enabled then
-            applyGalaxySky()
+            if not Lighting:FindFirstChild("CustomSky") then
+                local sky = Instance.new("Sky")
+                sky.Name = "CustomSky"
+                sky.SkyboxBk = "rbxassetid://159454299"
+                sky.SkyboxDn = "rbxassetid://159454296"
+                sky.SkyboxFt = "rbxassetid://159454293"
+                sky.SkyboxLf = "rbxassetid://159454286"
+                sky.SkyboxRt = "rbxassetid://159454300"
+                sky.SkyboxUp = "rbxassetid://159454288"
+                sky.StarCount = 5000
+                sky.Parent = Lighting
+            end
         else
-            removeGalaxySky()
+            for _, v in pairs(Lighting:GetChildren()) do
+                if v:IsA("Sky") and v.Name == "CustomSky" then
+                    v:Destroy()
+                end
+            end
         end
 
         if Settings.FullBright_Enabled then
@@ -1261,19 +1225,19 @@ local function updateLighting()
             Lighting.Ambient = Color3.fromRGB(25, 25, 45)
             Lighting.OutdoorAmbient = Color3.fromRGB(25, 25, 45)
             Lighting.GlobalShadows = true
-            Lighting.FogEnd = Settings.Fust_NoFog_Enabled and 1000000 or OrigLighting.FogEnd
+            Lighting.FogEnd = Settings.Fust_NoFog_Enabled and 1000000 or State.OrigLighting.FogEnd
         else
-            Lighting.ClockTime = OrigLighting.ClockTime
-            Lighting.Brightness = OrigLighting.Brightness
-            Lighting.Ambient = OrigLighting.Ambient
-            Lighting.OutdoorAmbient = OrigLighting.OutdoorAmbient
-            Lighting.GlobalShadows = OrigLighting.GlobalShadows
-            Lighting.FogEnd = Settings.Fust_NoFog_Enabled and 1000000 or OrigLighting.FogEnd
-            Lighting.FogStart = Settings.Fust_NoFog_Enabled and 999999 or OrigLighting.FogStart
+            Lighting.ClockTime = State.OrigLighting.ClockTime
+            Lighting.Brightness = State.OrigLighting.Brightness
+            Lighting.Ambient = State.OrigLighting.Ambient
+            Lighting.OutdoorAmbient = State.OrigLighting.OutdoorAmbient
+            Lighting.GlobalShadows = State.OrigLighting.GlobalShadows
+            Lighting.FogEnd = Settings.Fust_NoFog_Enabled and 1000000 or State.OrigLighting.FogEnd
+            Lighting.FogStart = Settings.Fust_NoFog_Enabled and 999999 or State.OrigLighting.FogStart
         end
 
         if not Settings.Fust_NoFog_Enabled then
-            for atm, data in pairs(savedAtmosphereData) do
+            for atm, data in pairs(State.savedAtmosphereData) do
                 if atm and atm.Parent then
                     atm.Density = data.Density
                     atm.Haze = data.Haze
@@ -1323,10 +1287,10 @@ local function GetClosestTargetWallbang()
 end
 
 -- ==============================================================================
--- БОЕВЫЕ ЭФФЕКТЫ (ОСКОЛКИ-ИСКРЫ И ЯРКИЙ ПРИЗРАК)
+-- БОЕВЫЕ ЭФФЕКТЫ
 -- ==============================================================================
 local function PlayCombatEffect(effectType, targetData)
-    if IsUnloaded then return end
+    if State.IsUnloaded then return end
 
     task.spawn(function()
         pcall(function()
@@ -1334,11 +1298,9 @@ local function PlayCombatEffect(effectType, targetData)
                 local pos = typeof(targetData) == "Vector3" and targetData or (targetData and targetData.Position)
                 if not pos then return end
 
-                local particleCount = 14
-                for _ = 1, particleCount do
+                for _ = 1, 14 do
                     local shard = Instance.new("Part")
                     shard.Name = "HitParticleShard"
-
                     local shardSize = math.random(30, 45) / 100
                     shard.Size = Vector3.new(shardSize, shardSize, shardSize)
                     shard.Material = Enum.Material.Neon
@@ -1441,7 +1403,7 @@ local function PlayCombatEffect(effectType, targetData)
 end
 
 -- ==========================================
--- ФИЗИЧЕСКИЙ РЕШАТЕЛЬ ТРАЕКТОРИИ (ПЛАВНАЯ АВТО-БАЛЛИСТИКА)
+-- ФИЗИЧЕСКИЙ РЕШАТЕЛЬ ТРАЕКТОРИИ
 -- ==========================================
 local function CalculateChance(Percentage)
     Percentage = math.floor(Percentage)
@@ -1457,9 +1419,9 @@ local function getSmoothTargetVelocity(targetPart)
     if not targetPart then return Vector3.zero end
     local rawVel = targetPart.AssemblyLinearVelocity or Vector3.zero
     local model = targetPart:FindFirstAncestorOfClass("Model") or targetPart
-    local prevVel = smoothedTargetVel[model] or rawVel
+    local prevVel = State.smoothedTargetVel[model] or rawVel
     local filteredVel = prevVel:Lerp(rawVel, 0.18)
-    smoothedTargetVel[model] = filteredVel
+    State.smoothedTargetVel[model] = filteredVel
     return filteredVel
 end
 
@@ -1528,7 +1490,6 @@ local function getPredictedTargetPosition(targetPart, originPos)
     return targetPos
 end
 
--- ИСПРАВЛЕНО: Точный Raycast вместо GetPartsObscuringTarget, полностью игнорирующий любой транспорт
 local function IsPlayerVisible(Player)
     local PlayerCharacter = Player.Character
     local LocalPlayerCharacter = LocalPlayer.Character
@@ -1540,7 +1501,7 @@ local function IsPlayerVisible(Player)
     local origin = Camera.CFrame.Position
     local direction = PlayerRoot.Position - origin
 
-    local IgnoreList = {LocalPlayerCharacter, PlayerCharacter, Camera, tracerFolder}
+    local IgnoreList = {LocalPlayerCharacter, PlayerCharacter, Camera, State.tracerFolder}
 
     local myVeh = getSeatedVehicleModel(LocalPlayerCharacter)
     if myVeh then table.insert(IgnoreList, myVeh) end
@@ -1548,7 +1509,7 @@ local function IsPlayerVisible(Player)
     local targetVeh = getSeatedVehicleModel(PlayerCharacter)
     if targetVeh then table.insert(IgnoreList, targetVeh) end
 
-    for carModel, _ in pairs(trackedCars) do
+    for carModel, _ in pairs(State.trackedCars) do
         if carModel and carModel.Parent then
             table.insert(IgnoreList, carModel)
         end
@@ -1583,25 +1544,28 @@ local function getTargetPart(character)
     return targetPart
 end
 
--- ИСПРАВЛЕНО: Умный Team Check, который не считает весь сервер тиммейтами, если у всех одна дефолтная команда
-local function isTeammate(player)
-    if not Settings.TeamCheck then return false end
+-- ОПТИМИЗИРОВАННЫЙ TEAM CHECK С КЭШИРОВАНИЕМ
+local clanKeys = {"Clan", "ClanTag", "ClanName", "Party", "PartyId", "Squad", "TeamId", "Group", "Faction"}
+
+local function checkIsTeammateRaw(player)
     if not player or player == LocalPlayer then return false end
 
-    -- 1. Проверка по кланам/партиям/группам в атрибутах (Fust / Rust клоны)
-    local clanKeys = {"Clan", "ClanTag", "ClanName", "Party", "PartyId", "Squad", "TeamId", "Group", "Faction"}
-    for _, key in ipairs(clanKeys) do
+    for i = 1, #clanKeys do
+        local key = clanKeys[i]
         local myVal = LocalPlayer:GetAttribute(key)
         local theirVal = player:GetAttribute(key)
-        if myVal ~= nil and theirVal ~= nil and tostring(myVal) ~= "" and tostring(myVal) ~= "None" and tostring(myVal) ~= "0" then
-            if myVal == theirVal then return true end
+        if myVal ~= nil and theirVal ~= nil and myVal == theirVal then
+            local s = tostring(myVal)
+            if s ~= "" and s ~= "None" and s ~= "0" then
+                return true
+            end
         end
     end
 
-    -- 2. Проверка вложенных Value-объектов (Clan, Party, Squad, Team)
-    for _, key in ipairs(clanKeys) do
-        local myObj = LocalPlayer:FindFirstChild(key, true)
-        local theirObj = player:FindFirstChild(key, true)
+    for i = 1, #clanKeys do
+        local key = clanKeys[i]
+        local myObj = LocalPlayer:FindFirstChild(key)
+        local theirObj = player:FindFirstChild(key)
         if myObj and theirObj and myObj:IsA("ValueBase") and theirObj:IsA("ValueBase") then
             local mv = tostring(myObj.Value)
             if mv ~= "" and mv ~= "None" and mv ~= "0" and myObj.Value == theirObj.Value then
@@ -1610,32 +1574,36 @@ local function isTeammate(player)
         end
     end
 
-    -- 3. Проверка стандартных команд Roblox (ТОЛЬКО если на сервере реально больше 1 активной команды)
     if LocalPlayer.Team ~= nil and player.Team ~= nil and not LocalPlayer.Neutral and not player.Neutral then
         if LocalPlayer.Team == player.Team then
             local allPlayers = Players:GetPlayers()
             local sameTeamCount = 0
-            for _, p in ipairs(allPlayers) do
-                if p.Team == LocalPlayer.Team then
+            for i = 1, #allPlayers do
+                if allPlayers[i].Team == LocalPlayer.Team then
                     sameTeamCount = sameTeamCount + 1
                 end
             end
-            -- Если в этой команде сидят НЕ все игроки сервера (меньше 80%), значит команды реальные
             if #allPlayers > 1 and sameTeamCount < #allPlayers * 0.8 then
                 return true
             end
         end
     end
 
-    -- 4. Проверка зеленого маркера тиммейта над головой персонажа
-    if player.Character then
-        local head = player.Character:FindFirstChild("Head")
-        if head then
-            for _, desc in ipairs(head:GetDescendants()) do
-                if desc:IsA("TextLabel") or desc:IsA("ImageLabel") then
-                    local col = desc:IsA("TextLabel") and desc.TextColor3 or desc.ImageColor3
-                    if col.G > 0.75 and col.R < 0.35 and col.B < 0.35 and desc.Name ~= "PlayerName" and desc.Name ~= "ArmorLabel" then
-                        return true
+    local char = player.Character
+    local head = char and char:FindFirstChild("Head")
+    if head then
+        local children = head:GetChildren()
+        for i = 1, #children do
+            local b = children[i]
+            if b:IsA("BillboardGui") and b.Name ~= "InvCheckUI" and b.Name ~= "FustCarBillboard" then
+                local bChildren = b:GetChildren()
+                for j = 1, #bChildren do
+                    local desc = bChildren[j]
+                    if desc:IsA("TextLabel") or desc:IsA("ImageLabel") then
+                        local col = desc:IsA("TextLabel") and desc.TextColor3 or desc.ImageColor3
+                        if col.G > 0.75 and col.R < 0.35 and col.B < 0.35 then
+                            return true
+                        end
                     end
                 end
             end
@@ -1645,37 +1613,52 @@ local function isTeammate(player)
     return false
 end
 
+local function isPlayerTeammateCached(player)
+    if not player or player == LocalPlayer then return false end
+    local now = tick()
+    local cached = State.teamCheckCache[player]
+    if cached and (now - cached.Time) < 0.5 then
+        return cached.Result
+    end
+    local res = checkIsTeammateRaw(player)
+    State.teamCheckCache[player] = { Result = res, Time = now }
+    return res
+end
+
+local function isTeammate(player)
+    if not Settings.TeamCheck then return false end
+    return isPlayerTeammateCached(player)
+end
+
 local function getClosestToMouse()
     local originPos = (Camera and Camera.CFrame.Position) or Vector3.zero
     local isHoldingAimKey = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
 
-    -- 1. Логика Stick Aim (удерживает захваченную цель и не отпускает её, пока зажат ПКМ)
-    if Settings.Aimbot_StickyAim and StickyTarget then
+    if Settings.Aimbot_StickyAim and State.StickyTarget then
         if isHoldingAimKey then
-            local char = StickyTarget.Parent
+            local char = State.StickyTarget.Parent
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             local plr = char and Players:GetPlayerFromCharacter(char)
             if char and hum and hum.Health > 0 and plr then
                 if not isTeammate(plr) then
-                    local worldDist = (StickyTarget.Position - originPos).Magnitude
+                    local worldDist = (State.StickyTarget.Position - originPos).Magnitude
                     if not Settings.Aimbot_DistCheck_Enabled or worldDist <= Settings.Aimbot_MaxDistance then
                         if not Settings.VisCheck_Enabled or IsPlayerVisible(plr) then
-                            local refreshedPart = getTargetPart(char) or StickyTarget
-                            StickyTarget = refreshedPart
+                            local refreshedPart = getTargetPart(char) or State.StickyTarget
+                            State.StickyTarget = refreshedPart
                             return refreshedPart
                         end
                     end
                 end
             end
-            StickyTarget = nil
+            State.StickyTarget = nil
         else
-            StickyTarget = nil
+            State.StickyTarget = nil
         end
     elseif not isHoldingAimKey then
-        StickyTarget = nil
+        State.StickyTarget = nil
     end
 
-    -- 2. Поиск новой цели с учетом Distance Check
     local target = nil
     local maxScreenDist = Settings.Aimbot_360 and 99999 or Settings.Aimbot_FOV
     local mouseLoc = UserInputService:GetMouseLocation()
@@ -1714,7 +1697,7 @@ local function getClosestToMouse()
     end
 
     if Settings.Aimbot_StickyAim and isHoldingAimKey and target then
-        StickyTarget = target
+        State.StickyTarget = target
     end
 
     return target
@@ -1723,13 +1706,11 @@ end
 -- ==========================================
 -- ЛОГИКА HITSOUND
 -- ==========================================
-local lastHitSoundTime = 0
-
 local function playHitSound()
-    if not Settings.HitSound_Enabled or IsUnloaded then return end
+    if not Settings.HitSound_Enabled or State.IsUnloaded then return end
     local now = tick()
-    if now - lastHitSoundTime < 0.16 then return end
-    lastHitSoundTime = now
+    if now - State.lastHitSoundTime < 0.16 then return end
+    State.lastHitSoundTime = now
 
     task.spawn(function()
         local soundId = SOUND_PRESETS[Settings.HitSound_Type]
@@ -1753,10 +1734,8 @@ local function onHitMarkerTriggered()
     playHitSound()
     if Settings.HitEffect_Enabled then
         local targetPos = nil
-        if Settings.SilentAim_Enabled and LockedTarget then
-            targetPos = LockedTarget.Position
-        elseif LockedTarget then
-            targetPos = LockedTarget.Position
+        if State.LockedTarget then
+            targetPos = State.LockedTarget.Position
         elseif Mouse.Hit then
             targetPos = Mouse.Hit.Position
         end
@@ -1808,7 +1787,7 @@ local function hookEnemyDeath(pl)
             if not hum then return end
 
             table.insert(Connections, hum.Died:Connect(function()
-                if Settings.KillEffect_Enabled and (tick() - lastLocalClick < 1.0 or tick() - lastHitSoundTime < 1.0) then
+                if Settings.KillEffect_Enabled and (tick() - State.lastLocalClick < 1.0 or tick() - State.lastHitSoundTime < 1.0) then
                     PlayCombatEffect("Kill", char)
                 end
             end))
@@ -1822,15 +1801,15 @@ for _, p in pairs(Players:GetPlayers()) do hookEnemyDeath(p) end
 table.insert(Connections, Players.PlayerAdded:Connect(hookEnemyDeath))
 
 -- ==========================================
--- ИНДИКАТОР PEAK KILL
+-- ИНДИКАТОР PEAK KILL И ЭФФЕКТЫ КАМЕРЫ
 -- ==========================================
-local peakGui = Instance.new("ScreenGui")
 local showPeakIndicator
 do
-    peakGui.Name = "HubPeakIndicator"
-    peakGui.ResetOnSpawn = false
-    if not pcall(function() peakGui.Parent = CoreGui end) then
-        peakGui.Parent = PlayerGui
+    State.peakGui = Instance.new("ScreenGui")
+    State.peakGui.Name = "HubPeakIndicator"
+    State.peakGui.ResetOnSpawn = false
+    if not pcall(function() State.peakGui.Parent = CoreGui end) then
+        State.peakGui.Parent = PlayerGui
     end
 
     local peakFrame = Instance.new("Frame")
@@ -1839,7 +1818,7 @@ do
     peakFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     peakFrame.BackgroundTransparency = 1
     peakFrame.BorderSizePixel = 0
-    peakFrame.Parent = peakGui
+    peakFrame.Parent = State.peakGui
 
     local peakCorner = Instance.new("UICorner")
     peakCorner.CornerRadius = UDim.new(0, 6)
@@ -1865,22 +1844,20 @@ do
         task.defer(function()
             local currentTick = hidePeakTick
             task.wait(1.5)
-            if hidePeakTick == currentTick and not IsUnloaded then
+            if hidePeakTick == currentTick and not State.IsUnloaded then
                 TweenService:Create(peakFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1, Position = UDim2.new(0.5, -110, 0.85, 0)}):Play()
                 TweenService:Create(peakText, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 1}):Play()
             end
         end)
     end
-end
 
--- ==========================================
--- ОСВЕЩЕНИЕ И НАСЫЩЕННОСТЬ
--- ==========================================
-local colorCorrection = Lighting:FindFirstChild("HubColorCorrection")
-if not colorCorrection or not colorCorrection:IsA("ColorCorrectionEffect") then
-    colorCorrection = Instance.new("ColorCorrectionEffect")
-    colorCorrection.Name = "HubColorCorrection"
-    colorCorrection.Parent = Lighting
+    local cc = Lighting:FindFirstChild("HubColorCorrection")
+    if not cc or not cc:IsA("ColorCorrectionEffect") then
+        cc = Instance.new("ColorCorrectionEffect")
+        cc.Name = "HubColorCorrection"
+        cc.Parent = Lighting
+    end
+    State.colorCorrection = cc
 end
 
 -- ==========================================
@@ -1991,7 +1968,7 @@ local function applyChamsRobust(model, color, mat, isEnabled)
 end
 
 local function updateAllChams()
-    if IsUnloaded then return end
+    if State.IsUnloaded then return end
     local char = LocalPlayer.Character
     if char then
         applyChamsRobust(char, Settings.Local_Chams_Color, Settings.Local_Chams_Material, Settings.Local_Chams_Enabled)
@@ -2009,10 +1986,10 @@ end
 
 table.insert(Connections, LocalPlayer.CharacterAdded:Connect(function(char)
     cleanupSpeedConstraints()
-    wasSittingLastFrame = false
-    isHoldingZoomKey = false
-    isZoomingProcess = false
-    StickyTarget = nil
+    State.wasSittingLastFrame = false
+    State.isHoldingZoomKey = false
+    State.isZoomingProcess = false
+    State.StickyTarget = nil
     if Settings.Fust_Lay_Enabled then
         setFustLayState(false)
         pcall(function()
@@ -2215,13 +2192,11 @@ table.insert(Connections, workspace.DescendantAdded:Connect(function(child)
                 local fireOrigin = tool:FindFirstChild("FirePoint") or tool:FindFirstChild("Muzzle") or tool.Handle
                 local targetPos = nil
                 
-                if Settings.SilentAim_Enabled and LockedTarget then
-                    targetPos = getPredictedTargetPosition(LockedTarget, fireOrigin.Position)
-                elseif LockedTarget then
-                    targetPos = getPredictedTargetPosition(LockedTarget, fireOrigin.Position)
-                elseif Mouse.Hit and not targetPos then
+                if State.LockedTarget then
+                    targetPos = getPredictedTargetPosition(State.LockedTarget, fireOrigin.Position)
+                elseif Mouse.Hit then
                     targetPos = Mouse.Hit.Position
-                elseif not targetPos then
+                else
                     targetPos = Mouse.Origin.Position + (Mouse.UnitRay.Direction * 1000)
                 end
                 
@@ -2234,7 +2209,7 @@ table.insert(Connections, workspace.DescendantAdded:Connect(function(child)
 end))
 
 -- ==============================================================================
--- БЕЗОПАСНЫЕ И ОПТИМИЗИРОВАННЫЕ МЕТАМЕТОДЫ (С ЗАЩИТОЙ FOV ДЛЯ ЗУМА С ОРУЖИЕМ)
+-- БЕЗОПАСНЫЕ И ОПТИМИЗИРОВАННЫЕ МЕТАМЕТОДЫ
 -- ==============================================================================
 local mt = getrawmetatable(game)
 local oldNamecall = mt.__namecall
@@ -2243,19 +2218,19 @@ local oldNewIndex = mt.__newindex
 setreadonly(mt, false)
 
 mt.__namecall = newcclosure(function(self, ...)
-    if IsUnloaded then return oldNamecall(self, ...) end
+    if State.IsUnloaded then return oldNamecall(self, ...) end
 
     local method = getnamecallmethod()
 
     if Settings.SilentAim_Enabled and not checkcaller() then
         if method == "Raycast" and Settings.SilentAimMethod == "Raycast" and self == workspace then
             local origin, dir, params = ...
-            if typeof(origin) == "Vector3" and typeof(dir) == "Vector3" and LockedTarget then
+            if typeof(origin) == "Vector3" and typeof(dir) == "Vector3" and State.LockedTarget then
                 local chance = CalculateChance(Settings.HitChance)
                 if chance then
-                    local targetPos = getPredictedTargetPosition(LockedTarget, origin)
+                    local targetPos = getPredictedTargetPosition(State.LockedTarget, origin)
                     dir = getDirection(origin, targetPos)
-                    BulletCharge = 1
+                    State.BulletCharge = 1
                     return oldNamecall(self, origin, dir, params)
                 end
             end
@@ -2266,19 +2241,19 @@ mt.__namecall = newcclosure(function(self, ...)
 end)
 
 mt.__index = newcclosure(function(t, k)
-    if IsUnloaded then return oldIndex(t, k) end
+    if State.IsUnloaded then return oldIndex(t, k) end
 
     if not checkcaller() then
         if t == Mouse and Settings.SilentAim_Enabled and Settings.SilentAimMethod == "Mouse.Hit/Target" then
             local k_lower = string.lower(tostring(k))
-            if (k_lower == "target" or k_lower == "hit" or k_lower == "x" or k_lower == "y" or k_lower == "unitray") and LockedTarget then
+            if (k_lower == "target" or k_lower == "hit" or k_lower == "x" or k_lower == "y" or k_lower == "unitray") and State.LockedTarget then
                 local chance = CalculateChance(Settings.HitChance)
                 if chance then
                     local originPos = (Settings.SmartBallistics_Enabled and findWeaponMuzzlePosition()) or (Camera and Camera.CFrame.Position) or Vector3.zero
-                    local targetPos = getPredictedTargetPosition(LockedTarget, originPos)
+                    local targetPos = getPredictedTargetPosition(State.LockedTarget, originPos)
 
                     if k_lower == "target" then 
-                        return LockedTarget
+                        return State.LockedTarget
                     elseif k_lower == "hit" then 
                         return CFrame.new(targetPos)
                     elseif k_lower == "x" then 
@@ -2305,12 +2280,12 @@ mt.__index = newcclosure(function(t, k)
 end)
 
 mt.__newindex = newcclosure(function(t, k, v)
-    if not IsUnloaded and not checkcaller() then
-        if t == Camera and k == "FieldOfView" and Settings.Fust_Zoom_Enabled and isZoomingProcess then
+    if not State.IsUnloaded and not checkcaller() then
+        if t == Camera and k == "FieldOfView" and Settings.Fust_Zoom_Enabled and State.isZoomingProcess then
             if type(v) == "number" and v > 35 then
-                baseGameFOV = v
+                State.baseGameFOV = v
             end
-            return oldNewIndex(t, k, currentZoomFOV)
+            return oldNewIndex(t, k, State.currentZoomFOV)
         end
     end
     return oldNewIndex(t, k, v)
@@ -2322,7 +2297,7 @@ setreadonly(mt, true)
 -- СЕРВЕРНЫЙ, ЛОКАЛЬНЫЙ АНТИ-АИМ, WALLBANG, FUST MOVEMENTS
 -- ==========================================
 table.insert(Connections, RunService.Stepped:Connect(function()
-    if IsUnloaded then return end
+    if State.IsUnloaded then return end
     local char = LocalPlayer.Character
     if not char then return end
     
@@ -2336,7 +2311,7 @@ table.insert(Connections, RunService.Stepped:Connect(function()
 end))
 
 table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
-    if IsUnloaded then return end
+    if State.IsUnloaded then return end
     
     if Settings.Fust_InvCheck_Enabled then
         updateInvCheck()
@@ -2347,7 +2322,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     local hum = char:FindFirstChild("Humanoid")
     local hrp = char:FindFirstChild("HumanoidRootPart")
     
-    -- 1. Wallbang
     if not Settings.Wallbang_Enabled then
         restoreWalls()
     else
@@ -2394,7 +2368,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- 2. Inf Ammo
     if Settings.InfAmmo_Enabled then
         pcall(function()
             if char ~= State.lastAmmoChar then
@@ -2446,20 +2419,18 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- 3. Движение, Fust Speed, Spider, Lay и Анти-Аим
     if hum and hrp and hum.Health > 0 then
         local currentlySitting = isPlayerSittingInVehicle(hum)
-        if wasSittingLastFrame and not currentlySitting then
+        if State.wasSittingLastFrame and not currentlySitting then
             cleanupSpeedConstraints()
             if hum.Sit then hum.Sit = false end
         end
-        wasSittingLastFrame = currentlySitting
+        State.wasSittingLastFrame = currentlySitting
 
-        -- Fust Spider (Лазать по стенам с настраиваемой скоростью)
         if Settings.Fust_Spider_Enabled and not currentlySitting and not UserInputService:GetFocusedTextBox() then
             if UserInputService:IsKeyDown(Enum.KeyCode.W) then
                 local rayParams = RaycastParams.new()
-                rayParams.FilterDescendantsInstances = {char, Camera, tracerFolder}
+                rayParams.FilterDescendantsInstances = {char, Camera, State.tracerFolder}
                 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
                 local fwdRay = workspace:Raycast(hrp.Position, hrp.CFrame.LookVector * 2.5, rayParams)
@@ -2470,12 +2441,11 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
             end
         end
 
-        -- speed (fust sv by fliriz)
         if Settings.Fust_Speed_Enabled and not currentlySitting and not UserInputService:GetFocusedTextBox() then
             local moveDir = hum.MoveDirection
             local flatDir = Vector3.new(moveDir.X, 0, moveDir.Z)
             if flatDir.Magnitude < 0.05 then
-                if speedLinearVel then speedLinearVel.Enabled = false end
+                if State.speedLinearVel then State.speedLinearVel.Enabled = false end
             else
                 flatDir = flatDir.Unit
                 local wave = math.sin(tick() * 7) * 1.1
@@ -2486,7 +2456,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                     lv.PlaneVelocity = Vector2.new(flatDir.X * targetSpd, flatDir.Z * targetSpd)
                     lv.Enabled = true
                 else
-                    if speedLinearVel then speedLinearVel.Enabled = false end
+                    if State.speedLinearVel then State.speedLinearVel.Enabled = false end
                     if hum.FloorMaterial ~= Enum.Material.Air and not Settings.Fust_Lay_Enabled then
                         hum.Jump = true
                     end
@@ -2497,10 +2467,9 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                 end
             end
         else
-            if speedLinearVel then speedLinearVel.Enabled = false end
+            if State.speedLinearVel then State.speedLinearVel.Enabled = false end
         end
 
-        -- Bhop-rage
         if Settings.BhopRage_Enabled and not State.isPeeking then
             local isAir = (hum.FloorMaterial == Enum.Material.Air) or (hum:GetState() == Enum.HumanoidStateType.Freefall) or (hum:GetState() == Enum.HumanoidStateType.Jumping)
             if isAir then
@@ -2515,41 +2484,39 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
             end
         end
 
-        -- Оригинальный Fust Lay
         if Settings.Fust_Lay_Enabled then
             if currentlySitting then
-                fustIsSpoofed = false
+                State.fustIsSpoofed = false
             else
-                fustRealCFrame = hrp.CFrame
-                fustRealVelocity = hrp.AssemblyLinearVelocity
+                State.fustRealCFrame = hrp.CFrame
+                State.fustRealVelocity = hrp.AssemblyLinearVelocity
 
                 tiltHeadDown(char)
 
                 local rayParams = RaycastParams.new()
-                rayParams.FilterDescendantsInstances = {char, Camera, tracerFolder}
+                rayParams.FilterDescendantsInstances = {char, Camera, State.tracerFolder}
                 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-                local rayResult = workspace:Raycast(fustRealCFrame.Position, Vector3.new(0, -4, 0), rayParams)
-                local targetY = rayResult and (rayResult.Position.Y + 0.55) or (fustRealCFrame.Position.Y - 1.5)
+                local rayResult = workspace:Raycast(State.fustRealCFrame.Position, Vector3.new(0, -4, 0), rayParams)
+                local targetY = rayResult and (rayResult.Position.Y + 0.55) or (State.fustRealCFrame.Position.Y - 1.5)
 
                 local camLook = Camera.CFrame.LookVector
                 local flatLook = Vector3.new(camLook.X, 0, camLook.Z)
                 if flatLook.Magnitude > 0.01 then flatLook = flatLook.Unit else flatLook = Vector3.new(0, 0, -1) end
 
-                local layPos = Vector3.new(fustRealCFrame.Position.X, targetY, fustRealCFrame.Position.Z)
+                local layPos = Vector3.new(State.fustRealCFrame.Position.X, targetY, State.fustRealCFrame.Position.Z)
                 hrp.CFrame = CFrame.new(layPos, layPos + flatLook) * CFrame.Angles(math.rad(-90), 0, 0)
-                fustIsSpoofed = true
+                State.fustIsSpoofed = true
                 return
             end
         end
 
-        -- Если игрок сидит в транспорте, не перезаписываем CFrame его HumanoidRootPart, чтобы не ломать физику машины и прицел
         if currentlySitting then
             return
         end
 
         if State.isPeeking and State.peekOriginCFrame then
-            local aimPos = LockedTarget and getPredictedTargetPosition(LockedTarget, State.peekOriginCFrame.Position) or (Camera.CFrame.Position + Camera.CFrame.LookVector * 1000)
+            local aimPos = State.LockedTarget and getPredictedTargetPosition(State.LockedTarget, State.peekOriginCFrame.Position) or (Camera.CFrame.Position + Camera.CFrame.LookVector * 1000)
             local targetPeakPos = State.peekOriginCFrame.Position + getPeakOffset()
             
             local lookVector = Vector3.new(aimPos.X - targetPeakPos.X, 0, aimPos.Z - targetPeakPos.Z)
@@ -2583,8 +2550,8 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         if Settings.AA_Enabled and Settings.AA_Yaw ~= "None" then
             if Settings.AA_Yaw == "Backward" then State.targetYaw = State.targetYaw + math.pi
             elseif Settings.AA_Yaw == "Spinbot" then
-                currentAAYaw = (currentAAYaw or 0) + math.rad(Settings.AA_SpinSpeed * (dt * 60))
-                State.targetYaw = currentAAYaw
+                State.currentAAYaw = (State.currentAAYaw or 0) + math.rad(Settings.AA_SpinSpeed * (dt * 60))
+                State.targetYaw = State.currentAAYaw
             elseif Settings.AA_Yaw == "Jitter" then State.targetYaw = State.targetYaw + math.rad(math.random(-180, 180)) end
             State.doOverride = true
         end
@@ -2637,7 +2604,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
             hum.AutoRotate = false
             State.fakeCFrameServer = CFrame.new(fakePosition) * CFrame.Angles(0, State.targetYaw, 0) * CFrame.Angles(State.targetPitch, 0, 0)
             hrp.CFrame = State.fakeCFrameServer
-        elseif Settings.TP_Enabled and not Library.Opened then
+        elseif Settings.TP_Enabled then
             hum.AutoRotate = true
             State.fakeCFrameServer = nil
             local yaw = math.atan2(-camLook.X, -camLook.Z)
@@ -2654,7 +2621,7 @@ end))
 -- ==========================================
 local function updateDesyncGhost(dt)
     local isAnyAA = Settings.Desync_Enabled or Settings.AACSP_Enabled or Settings.SpinbotCS_Enabled or Settings.AA_Enabled or Settings.AACSP_Local_Enabled
-    if not Settings.Desync_Vis or not isAnyAA or State.isPeeking or IsUnloaded then
+    if not Settings.Desync_Vis or not isAnyAA or State.isPeeking or State.IsUnloaded then
         if State.currentGhost then
             State.currentGhost:Destroy()
             State.currentGhost = nil
@@ -2717,57 +2684,30 @@ end
 -- ==========================================
 -- DRAWING API
 -- ==========================================
-local fovCircle = Drawing.new("Circle")
-fovCircle.Thickness = 1.5
-fovCircle.Filled = false
-fovCircle.NumSides = 64
-fovCircle.Transparency = 1
-fovCircle.Visible = false
+do
+    State.fovCircle = Drawing.new("Circle")
+    State.fovCircle.Thickness = 1.5
+    State.fovCircle.Filled = false
+    State.fovCircle.NumSides = 64
+    State.fovCircle.Transparency = 1
+    State.fovCircle.Visible = false
 
-local crosshairLines = {}
-for _ = 1, 4 do
-    local line = Drawing.new("Line")
-    line.Thickness = 1.5
-    line.Transparency = 1
-    line.Visible = false
-    table.insert(crosshairLines, line)
-end
+    State.crosshairLines = {}
+    for _ = 1, 4 do
+        local line = Drawing.new("Line")
+        line.Thickness = 1.5
+        line.Transparency = 1
+        line.Visible = false
+        table.insert(State.crosshairLines, line)
+    end
 
-local crosshairText = Drawing.new("Text")
-crosshairText.Text = "Fliriz cambek)"
-crosshairText.Size = 16
-crosshairText.Center = true
-crosshairText.Outline = true
-crosshairText.Transparency = 1
-crosshairText.Visible = false
-
-local espCache = {}
-
-local function createLine()
-    local line = Drawing.new("Line")
-    line.Visible = false
-    line.Thickness = 1.5
-    line.Transparency = 1
-    return line
-end
-
-local function createSquare()
-    local sq = Drawing.new("Square")
-    sq.Visible = false
-    sq.Thickness = 1.5
-    sq.Filled = false
-    sq.Transparency = 1
-    return sq
-end
-
-local function createText()
-    local txt = Drawing.new("Text")
-    txt.Visible = false
-    txt.Size = 13
-    txt.Center = true
-    txt.Outline = true
-    txt.Transparency = 1
-    return txt
+    State.crosshairText = Drawing.new("Text")
+    State.crosshairText.Text = "Fliriz cambek)"
+    State.crosshairText.Size = 16
+    State.crosshairText.Center = true
+    State.crosshairText.Outline = true
+    State.crosshairText.Transparency = 1
+    State.crosshairText.Visible = false
 end
 
 local function createNeonHat(character)
@@ -2797,11 +2737,20 @@ end
 
 local function setupESP(player)
     if player == LocalPlayer then return end
+    local function cLine()
+        local l = Drawing.new("Line"); l.Visible = false; l.Thickness = 1.5; l.Transparency = 1; return l
+    end
+    local function cSq()
+        local s = Drawing.new("Square"); s.Visible = false; s.Thickness = 1.5; s.Filled = false; s.Transparency = 1; return s
+    end
+    local function cTxt()
+        local t = Drawing.new("Text"); t.Visible = false; t.Size = 13; t.Center = true; t.Outline = true; t.Transparency = 1; return t
+    end
     espCache[player] = {
-        MainBox = createSquare(), HeadBox = createSquare(),
-        Spine = createLine(), LeftArm = createLine(), RightArm = createLine(),
-        LeftLeg = createLine(), RightLeg = createLine(),
-        NameText = createText(), HealthBarBg = createSquare(), HealthBarFill = createSquare(), HealthText = createText()
+        MainBox = cSq(), HeadBox = cSq(),
+        Spine = cLine(), LeftArm = cLine(), RightArm = cLine(),
+        LeftLeg = cLine(), RightLeg = cLine(),
+        NameText = cTxt(), HealthBarBg = cSq(), HealthBarFill = cSq(), HealthText = cTxt()
     }
 end
 
@@ -2812,50 +2761,460 @@ table.insert(Connections, Players.PlayerRemoving:Connect(function(player)
         for _, obj in pairs(espCache[player]) do pcall(function() obj:Remove() end) end
         espCache[player] = nil
     end
-    if invUIs[player] then
-        invUIs[player]:Destroy()
-        invUIs[player] = nil
+    if State.invUIs[player] then
+        State.invUIs[player]:Destroy()
+        State.invUIs[player] = nil
     end
-    if memoryInventory[player] then
-        memoryInventory[player] = nil
-    end
+    State.memoryInventory[player] = nil
+    State.teamCheckCache[player] = nil
 end))
+
+-- ==============================================================================
+-- LINORIALIB ИНТЕРФЕЙС И ИНТЕРАКТИВНЫЙ 2D ESP PREVIEW (С DRAG & DROP)
+-- ==============================================================================
+local Window = Library:CreateWindow({
+    Title = 'Skeetparser by Fliriz',
+    Center = true,
+    AutoShow = true,
+    TabPadding = 2,
+    MenuFadeTime = 0.2
+})
+
+local Preview = {
+    dummyParts = {},
+    bones = {},
+    draggingElem = nil,
+    dragStartMouse = Vector2.zero,
+    dragStartOffset = Vector2.zero,
+    -- Координаты референсного бокса внутри превью: CenterX = 99, TopY = 78, Width = 108, Height = 196
+    RefCenterX = 99,
+    RefTopY = 78,
+    RefW = 108,
+    RefH = 196
+}
+
+local function applyPreviewPositionsFromLayout()
+    local L = State.ESP_Layout
+    -- 1. Никнейм
+    local nameCenterX = Preview.RefCenterX + (L.Name_X * Preview.RefW)
+    local nameTopY = Preview.RefTopY + (L.Name_Y * Preview.RefH)
+    Preview.NameText.Position = UDim2.fromOffset(nameCenterX - 70, nameTopY)
+
+    -- 2. Полоска HP
+    local hpBarX = Preview.RefCenterX + (L.HpBar_X * Preview.RefW)
+    local hpBarY = Preview.RefTopY + (L.HpBar_Y * Preview.RefH)
+    Preview.HpBg.Position = UDim2.fromOffset(hpBarX, hpBarY)
+
+    -- 3. Текст HP
+    local hpTxtX = Preview.RefCenterX + (L.HpText_X * Preview.RefW)
+    local hpTxtY = Preview.RefTopY + (L.HpText_Y * Preview.RefH)
+    Preview.HpText.Position = UDim2.fromOffset(hpTxtX - 18, hpTxtY)
+
+    -- 4. Иконки инвентаря (Inv ESP)
+    local invCenterX = Preview.RefCenterX + (L.Inv_X * Preview.RefW)
+    local invTopY = Preview.RefTopY + (L.Inv_Y * Preview.RefH)
+    Preview.InvContainer.Position = UDim2.fromOffset(invCenterX - 90, invTopY)
+end
+
+local function resetEspPositions()
+    State.ESP_Layout.Name_X = 0
+    State.ESP_Layout.Name_Y = -0.09
+    State.ESP_Layout.HpBar_X = -0.56
+    State.ESP_Layout.HpBar_Y = 0
+    State.ESP_Layout.HpText_X = -0.76
+    State.ESP_Layout.HpText_Y = 0.13
+    State.ESP_Layout.Inv_X = 0
+    State.ESP_Layout.Inv_Y = -0.30
+    applyPreviewPositionsFromLayout()
+    State.lastInvUpdate = 0
+end
+
+do
+    Preview.Gui = Instance.new("ScreenGui")
+    Preview.Gui.Name = "SkeetEspPreviewGui"
+    Preview.Gui.ResetOnSpawn = false
+    Preview.Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    if not pcall(function() Preview.Gui.Parent = CoreGui end) then
+        Preview.Gui.Parent = PlayerGui
+    end
+
+    Preview.Panel = Instance.new("Frame")
+    Preview.Panel.Name = "PreviewPanel"
+    Preview.Panel.Size = UDim2.fromOffset(215, 380)
+    Preview.Panel.Position = UDim2.new(0.5, 350, 0.5, -190)
+    Preview.Panel.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+    Preview.Panel.BorderSizePixel = 0
+    Preview.Panel.Parent = Preview.Gui
+
+    local outerStroke = Instance.new("UIStroke")
+    outerStroke.Color = Color3.fromRGB(50, 50, 55)
+    outerStroke.Thickness = 1
+    outerStroke.Parent = Preview.Panel
+
+    local accent = Instance.new("Frame")
+    accent.Size = UDim2.new(1, 0, 0, 2)
+    accent.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
+    accent.BorderSizePixel = 0
+    accent.Parent = Preview.Panel
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 20)
+    title.Position = UDim2.fromOffset(0, 3)
+    title.BackgroundTransparency = 1
+    title.Text = "ESP PREVIEW (DRAG ELEMENTS)"
+    title.TextColor3 = Color3.fromRGB(220, 220, 225)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 11
+    title.Parent = Preview.Panel
+
+    Preview.Canvas = Instance.new("Frame")
+    Preview.Canvas.Size = UDim2.new(1, -16, 1, -34)
+    Preview.Canvas.Position = UDim2.fromOffset(8, 26)
+    Preview.Canvas.BackgroundColor3 = Color3.fromRGB(14, 14, 16)
+    Preview.Canvas.BorderSizePixel = 0
+    Preview.Canvas.ClipsDescendants = true
+    Preview.Canvas.Parent = Preview.Panel
+
+    local canvasStroke = Instance.new("UIStroke")
+    canvasStroke.Color = Color3.fromRGB(35, 35, 40)
+    canvasStroke.Thickness = 1
+    canvasStroke.Parent = Preview.Canvas
+
+    local function makeLimb(name, x, y, w, h, cr)
+        local f = Instance.new("Frame")
+        f.Name = name
+        f.Position = UDim2.fromOffset(x, y)
+        f.Size = UDim2.fromOffset(w, h)
+        f.BackgroundColor3 = Color3.fromRGB(95, 98, 110)
+        f.BorderSizePixel = 0
+        if cr and cr > 0 then
+            local c = Instance.new("UICorner")
+            c.CornerRadius = UDim.new(0, cr)
+            c.Parent = f
+        end
+        f.Parent = Preview.Canvas
+        table.insert(Preview.dummyParts, f)
+    end
+
+    makeLimb("Head", 82, 85, 34, 34, 6)
+    makeLimb("Torso", 75, 123, 48, 68, 3)
+    makeLimb("LeftArm", 51, 123, 20, 66, 3)
+    makeLimb("RightArm", 127, 123, 20, 66, 3)
+    makeLimb("LeftLeg", 75, 195, 22, 72, 3)
+    makeLimb("RightLeg", 101, 195, 22, 72, 3)
+
+    Preview.Hat = Instance.new("Frame")
+    Preview.Hat.Position = UDim2.fromOffset(73, 73)
+    Preview.Hat.Size = UDim2.fromOffset(52, 12)
+    Preview.Hat.BackgroundColor3 = Settings.ESP_Color
+    Preview.Hat.BorderSizePixel = 0
+    Preview.Hat.Visible = false
+    Preview.Hat.Parent = Preview.Canvas
+    local hc1 = Instance.new("UICorner"); hc1.CornerRadius = UDim.new(0, 4); hc1.Parent = Preview.Hat
+    local topCone = Instance.new("Frame")
+    topCone.Position = UDim2.fromOffset(12, -8)
+    topCone.Size = UDim2.fromOffset(28, 10)
+    topCone.BackgroundColor3 = Settings.ESP_Color
+    topCone.BorderSizePixel = 0
+    topCone.Parent = Preview.Hat
+    local hc2 = Instance.new("UICorner"); hc2.CornerRadius = UDim.new(0, 4); hc2.Parent = topCone
+
+    Preview.Box = Instance.new("Frame")
+    Preview.Box.Position = UDim2.fromOffset(45, 78)
+    Preview.Box.Size = UDim2.fromOffset(108, 196)
+    Preview.Box.BackgroundTransparency = 1
+    Preview.Box.Visible = false
+    Preview.Box.Parent = Preview.Canvas
+    Preview.BoxStroke = Instance.new("UIStroke")
+    Preview.BoxStroke.Color = Settings.ESP_Color
+    Preview.BoxStroke.Thickness = 1.5
+    Preview.BoxStroke.Parent = Preview.Box
+
+    Preview.HeadBox = Instance.new("Frame")
+    Preview.HeadBox.Position = UDim2.fromOffset(80, 83)
+    Preview.HeadBox.Size = UDim2.fromOffset(38, 38)
+    Preview.HeadBox.BackgroundTransparency = 1
+    Preview.HeadBox.Visible = false
+    Preview.HeadBox.Parent = Preview.Canvas
+    Preview.HeadBoxStroke = Instance.new("UIStroke")
+    Preview.HeadBoxStroke.Color = Settings.ESP_Color
+    Preview.HeadBoxStroke.Thickness = 1.5
+    Preview.HeadBoxStroke.Parent = Preview.HeadBox
+
+    local function makeBone(x1, y1, x2, y2)
+        local line = Instance.new("Frame")
+        local dx, dy = x2 - x1, y2 - y1
+        local len = math.sqrt(dx * dx + dy * dy)
+        local cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        line.Size = UDim2.fromOffset(len, 2)
+        line.Position = UDim2.fromOffset(cx - len / 2, cy - 1)
+        line.Rotation = math.deg(math.atan2(dy, dx))
+        line.BackgroundColor3 = Settings.ESP_Color
+        line.BorderSizePixel = 0
+        line.Visible = false
+        line.Parent = Preview.Canvas
+        table.insert(Preview.bones, line)
+    end
+
+    makeBone(99, 121, 99, 185)
+    makeBone(99, 130, 61, 155)
+    makeBone(99, 130, 137, 155)
+    makeBone(99, 185, 86, 240)
+    makeBone(99, 185, 112, 240)
+
+    -- Перетаскиваемый Никнейм
+    Preview.NameText = Instance.new("TextLabel")
+    Preview.NameText.Size = UDim2.fromOffset(140, 18)
+    Preview.NameText.BackgroundTransparency = 1
+    Preview.NameText.Text = LocalPlayer.Name
+    Preview.NameText.TextColor3 = Settings.ESP_Color
+    Preview.NameText.TextStrokeTransparency = 0
+    Preview.NameText.Font = Enum.Font.GothamBold
+    Preview.NameText.TextSize = 12
+    Preview.NameText.Active = true
+    Preview.NameText.Visible = false
+    Preview.NameText.Parent = Preview.Canvas
+
+    -- Перетаскиваемая Полоска HP
+    Preview.HpBg = Instance.new("Frame")
+    Preview.HpBg.Size = UDim2.fromOffset(6, 196)
+    Preview.HpBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    Preview.HpBg.BorderSizePixel = 0
+    Preview.HpBg.Active = true
+    Preview.HpBg.Visible = false
+    Preview.HpBg.Parent = Preview.Canvas
+
+    local hpFill = Instance.new("Frame")
+    hpFill.Position = UDim2.fromOffset(1, 30)
+    hpFill.Size = UDim2.fromOffset(4, 166)
+    hpFill.BackgroundColor3 = Color3.fromRGB(40, 255, 60)
+    hpFill.BorderSizePixel = 0
+    hpFill.Parent = Preview.HpBg
+
+    -- Перетаскиваемый Текст HP
+    Preview.HpText = Instance.new("TextLabel")
+    Preview.HpText.Size = UDim2.fromOffset(36, 16)
+    Preview.HpText.BackgroundTransparency = 1
+    Preview.HpText.Text = "85 HP"
+    Preview.HpText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Preview.HpText.TextStrokeTransparency = 0
+    Preview.HpText.Font = Enum.Font.GothamBold
+    Preview.HpText.TextSize = 10
+    Preview.HpText.Active = true
+    Preview.HpText.Visible = false
+    Preview.HpText.Parent = Preview.Canvas
+
+    -- Перетаскиваемый контейнер Inv ESP
+    Preview.InvContainer = Instance.new("Frame")
+    Preview.InvContainer.Size = UDim2.fromOffset(180, 42)
+    Preview.InvContainer.BackgroundTransparency = 1
+    Preview.InvContainer.Active = true
+    Preview.InvContainer.Visible = false
+    Preview.InvContainer.Parent = Preview.Canvas
+
+    Preview.InvGrid = Instance.new("UIGridLayout")
+    Preview.InvGrid.CellSize = UDim2.fromOffset(24, 24)
+    Preview.InvGrid.CellPadding = UDim2.fromOffset(3, 3)
+    Preview.InvGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    Preview.InvGrid.VerticalAlignment = Enum.VerticalAlignment.Bottom
+    Preview.InvGrid.Parent = Preview.InvContainer
+
+    for idx, itemName in ipairs({"AK47", "Bow", "Med"}) do
+        local slot = Instance.new("Frame")
+        slot.BackgroundColor3 = (idx == 1) and Color3.fromRGB(45, 115, 255) or Color3.fromRGB(28, 28, 34)
+        slot.BackgroundTransparency = 0.2
+        slot.BorderSizePixel = 0
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 4)
+        c.Parent = slot
+        if idx == 1 then
+            local st = Instance.new("UIStroke")
+            st.Color = Color3.fromRGB(130, 200, 255)
+            st.Thickness = 1.2
+            st.Parent = slot
+        end
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.9, 0, 0.9, 0)
+        lbl.Position = UDim2.new(0.05, 0, 0.05, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = itemName
+        lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+        lbl.Font = Enum.Font.GothamSemibold
+        lbl.TextScaled = true
+        lbl.Parent = slot
+        slot.Parent = Preview.InvContainer
+    end
+
+    applyPreviewPositionsFromLayout()
+
+    -- Обработчики перетаскивания (Drag & Drop) для элементов ESP Preview
+    local function bindDraggable(guiObj, elemKey)
+        guiObj.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                Preview.draggingElem = elemKey
+                Preview.dragStartMouse = UserInputService:GetMouseLocation()
+                Preview.dragStartOffset = Vector2.new(guiObj.Position.X.Offset, guiObj.Position.Y.Offset)
+            end
+        end)
+    end
+
+    bindDraggable(Preview.NameText, "Name")
+    bindDraggable(Preview.HpBg, "HpBar")
+    bindDraggable(Preview.HpText, "HpText")
+    bindDraggable(Preview.InvContainer, "Inv")
+
+    table.insert(Connections, UserInputService.InputChanged:Connect(function(input)
+        if Preview.draggingElem and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = UserInputService:GetMouseLocation() - Preview.dragStartMouse
+            local newX = Preview.dragStartOffset.X + delta.X
+            local newY = Preview.dragStartOffset.Y + delta.Y
+            local L = State.ESP_Layout
+
+            if Preview.draggingElem == "Name" then
+                newX = math.clamp(newX, -40, 130)
+                newY = math.clamp(newY, 5, 320)
+                Preview.NameText.Position = UDim2.fromOffset(newX, newY)
+                L.Name_X = ((newX + 70) - Preview.RefCenterX) / Preview.RefW
+                L.Name_Y = (newY - Preview.RefTopY) / Preview.RefH
+
+            elseif Preview.draggingElem == "HpBar" then
+                newX = math.clamp(newX, 4, 190)
+                newY = math.clamp(newY, 10, 140)
+                Preview.HpBg.Position = UDim2.fromOffset(newX, newY)
+                L.HpBar_X = (newX - Preview.RefCenterX) / Preview.RefW
+                L.HpBar_Y = (newY - Preview.RefTopY) / Preview.RefH
+
+            elseif Preview.draggingElem == "HpText" then
+                newX = math.clamp(newX, 2, 165)
+                newY = math.clamp(newY, 5, 320)
+                Preview.HpText.Position = UDim2.fromOffset(newX, newY)
+                L.HpText_X = ((newX + 18) - Preview.RefCenterX) / Preview.RefW
+                L.HpText_Y = (newY - Preview.RefTopY) / Preview.RefH
+
+            elseif Preview.draggingElem == "Inv" then
+                newX = math.clamp(newX, -60, 100)
+                newY = math.clamp(newY, 2, 300)
+                Preview.InvContainer.Position = UDim2.fromOffset(newX, newY)
+                L.Inv_X = ((newX + 90) - Preview.RefCenterX) / Preview.RefW
+                L.Inv_Y = (newY - Preview.RefTopY) / Preview.RefH
+                State.lastInvUpdate = 0
+            end
+        end
+    end))
+
+    table.insert(Connections, UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Preview.draggingElem = nil
+        end
+    end))
+end
+
+-- Точная проверка открытости меню LinoriaLib
+local function isLinoriaMenuOpen()
+    local mainFrame = (Window and Window.Holder) or (Window and Window.Root)
+    if mainFrame then
+        local sg = mainFrame:FindFirstAncestorOfClass("ScreenGui")
+        if sg and not sg.Enabled then return false end
+        return mainFrame.Visible
+    end
+    if Library.ScreenGui and not Library.ScreenGui.Enabled then
+        return false
+    end
+    if Library.Toggled ~= nil then return Library.Toggled end
+    return false
+end
+
+local function updateEspPreview()
+    if State.IsUnloaded or not Preview.Gui or not Preview.Gui.Parent then return end
+
+    local menuOpen = isLinoriaMenuOpen()
+    Preview.Panel.Visible = menuOpen and Settings.ESP_Preview_Enabled
+    if not Preview.Panel.Visible then
+        Preview.draggingElem = nil
+        return
+    end
+
+    pcall(function()
+        local mainFrame = (Window and Window.Holder) or (Window and Window.Root)
+        if mainFrame and mainFrame.AbsoluteSize.X > 0 then
+            local absPos = mainFrame.AbsolutePosition
+            local absSize = mainFrame.AbsoluteSize
+            Preview.Panel.Position = UDim2.fromOffset(absPos.X + absSize.X + 8, absPos.Y)
+        end
+    end)
+
+    local espCol = Settings.ESP_Color
+    local chamsOn = Settings.Local_Chams_Enabled
+    local chamsCol = chamsOn and Settings.Local_Chams_Color or Color3.fromRGB(95, 98, 110)
+
+    for _, part in ipairs(Preview.dummyParts) do
+        part.BackgroundColor3 = chamsCol
+        part.BackgroundTransparency = chamsOn and 0.15 or 0
+    end
+
+    local espActive = Settings.ESP_Enabled
+    Preview.Box.Visible = espActive and Settings.ESP_Box
+    Preview.BoxStroke.Color = espCol
+
+    Preview.HeadBox.Visible = espActive and Settings.ESP_SkelHead
+    Preview.HeadBoxStroke.Color = espCol
+    for _, b in ipairs(Preview.bones) do
+        b.Visible = espActive and Settings.ESP_SkelHead
+        b.BackgroundColor3 = espCol
+    end
+
+    Preview.Hat.Visible = espActive and Settings.ESP_NeonHat
+    Preview.Hat.BackgroundColor3 = espCol
+    for _, ch in ipairs(Preview.Hat:GetChildren()) do
+        if ch:IsA("Frame") then ch.BackgroundColor3 = espCol end
+    end
+
+    Preview.NameText.Visible = espActive and Settings.ESP_Name
+    Preview.NameText.TextColor3 = espCol
+
+    Preview.HpBg.Visible = espActive and Settings.ESP_HealthBar
+    Preview.HpText.Visible = espActive and Settings.ESP_HealthText
+
+    Preview.InvContainer.Visible = Settings.Fust_InvCheck_Enabled
+    local sz = math.clamp(Settings.Fust_InvCheck_Size or 24, 14, 38)
+    Preview.InvGrid.CellSize = UDim2.fromOffset(sz, sz)
+end
 
 -- Рендер-цикл
 table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
-    if IsUnloaded then return end
+    if State.IsUnloaded then return end
     
     Camera = workspace.CurrentCamera or Camera
     local mouseLoc = UserInputService:GetMouseLocation()
+
+    updateEspPreview()
     
-    -- 1. Обработка Fust Lay
     if Settings.Fust_Lay_Enabled then
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if hrp and hum then
             if isPlayerSittingInVehicle(hum) then
-                if fustIsSpoofed and fustRealCFrame then hrp.CFrame = fustRealCFrame fustIsSpoofed = false end
+                if State.fustIsSpoofed and State.fustRealCFrame then hrp.CFrame = State.fustRealCFrame State.fustIsSpoofed = false end
                 hum.CameraOffset = Vector3.zero
             else
-                hum.CameraOffset = Vector3.new(0, LAY_CAMERA_HEIGHT_BOOST, 0)
-                if fustIsSpoofed and fustRealCFrame then
-                    hrp.CFrame = fustRealCFrame
-                    if fustRealVelocity then hrp.AssemblyLinearVelocity = fustRealVelocity end
-                    fustIsSpoofed = false
+                hum.CameraOffset = Vector3.new(0, State.LAY_CAMERA_HEIGHT_BOOST, 0)
+                if State.fustIsSpoofed and State.fustRealCFrame then
+                    hrp.CFrame = State.fustRealCFrame
+                    if State.fustRealVelocity then hrp.AssemblyLinearVelocity = State.fustRealVelocity end
+                    State.fustIsSpoofed = false
                 end
             end
         end
     end
 
-    -- 2. Обработка Fust Bullet Tracer + Авто-обучение баллистики
     if Settings.Fust_BulletTracer_Enabled or Settings.SmartBallistics_Enabled then
         local now = tick()
         local safeDt = math.max(dt, 0.001)
 
-        for part, cData in pairs(candidateProjectiles) do
+        for part, cData in pairs(State.candidateProjectiles) do
             if not part or not part.Parent or (now - cData.SpawnTime) > 4.0 then
-                candidateProjectiles[part] = nil
+                State.candidateProjectiles[part] = nil
             else
                 local curPos = part.Position
                 local stepVec = curPos - cData.LastPos
@@ -2872,19 +3231,19 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                     if measuredSpeed > 35 then
                         cData.ConfirmedFrames = cData.ConfirmedFrames + 1
                         if cData.ConfirmedFrames >= 1 then
-                            trackedProjectiles[part] = {
+                            State.trackedProjectiles[part] = {
                                 LastPos = cData.LastPos,
                                 LastVelY = (stepVec / safeDt).Y,
                                 SpeedSample = math.clamp(measuredSpeed, 150, 3000),
                                 WeaponName = cData.WeaponName or getEquippedWeaponNameAndInstance(),
                                 SpawnTime = now
                             }
-                            candidateProjectiles[part] = nil
-                            lastFireTimestamp = now
+                            State.candidateProjectiles[part] = nil
+                            State.lastFireTimestamp = now
 
                             if Settings.Fust_BulletTracer_Enabled and stepDist >= 0.15 and stepDist < 80 then
                                 drawFustTracerSegment(cData.LastPos, curPos)
-                                trackedProjectiles[part].LastPos = curPos
+                                State.trackedProjectiles[part].LastPos = curPos
                             end
                         end
                     else
@@ -2894,9 +3253,9 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
             end
         end
 
-        for part, data in pairs(trackedProjectiles) do
+        for part, data in pairs(State.trackedProjectiles) do
             if not part or not part.Parent or (now - data.SpawnTime) > 3.8 then
-                trackedProjectiles[part] = nil
+                State.trackedProjectiles[part] = nil
             else
                 local curPos = part.Position
                 local stepVec = curPos - data.LastPos
@@ -2906,7 +3265,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                     if data.LastVelY and data.WeaponName then
                         local measuredDrop = math.clamp(-(curVelY - data.LastVelY) / safeDt, 0, 150)
                         local basePreset = classifyWeaponByName(data.WeaponName) or WEAPON_CLASS_PRESETS.Pistol
-                        learnedWeaponBallistics[data.WeaponName] = {
+                        State.learnedWeaponBallistics[data.WeaponName] = {
                             Speed = data.SpeedSample * 0.6 + basePreset.Speed * 0.4,
                             Drop = measuredDrop > 35 and (measuredDrop * 0.5 + basePreset.Drop * 0.5) or basePreset.Drop,
                             Drag = basePreset.Drag,
@@ -2925,7 +3284,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- 3. Поддержание No Fog и FullBright
     if Settings.FullBright_Enabled then
         Lighting.Brightness = Settings.FullBright_Brightness
         Lighting.Ambient = Color3.fromRGB(255, 255, 255)
@@ -2946,10 +3304,10 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
     end
 
     if Settings.Aimbot_Enabled or Settings.SilentAim_Enabled or Settings.Aimbot_ShowFOV or Settings.Crosshair_Enabled then
-        LockedTarget = getClosestToMouse()
+        State.LockedTarget = getClosestToMouse()
     else
-        LockedTarget = nil
-        StickyTarget = nil
+        State.LockedTarget = nil
+        State.StickyTarget = nil
     end
 
     local char = LocalPlayer.Character
@@ -2972,7 +3330,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
         end
     end)
 
-    if Library.Opened then
+    if isLinoriaMenuOpen() then
         UserInputService.MouseBehavior = Enum.MouseBehavior.Default
     else
         if isTP_or_AA then
@@ -2980,13 +3338,13 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-   if Settings.TP_Enabled then
+    if Settings.TP_Enabled then
         pcall(function()
-            if not wasThirdPersonActive then
-                savedCameraMode = LocalPlayer.CameraMode
-                savedMinZoom = LocalPlayer.CameraMinZoomDistance
-                savedMaxZoom = LocalPlayer.CameraMaxZoomDistance
-                wasThirdPersonActive = true
+            if not State.wasThirdPersonActive then
+                State.savedCameraMode = LocalPlayer.CameraMode
+                State.savedMinZoom = LocalPlayer.CameraMinZoomDistance
+                State.savedMaxZoom = LocalPlayer.CameraMaxZoomDistance
+                State.wasThirdPersonActive = true
             end
 
             LocalPlayer.CameraMode = Enum.CameraMode.Classic
@@ -2998,18 +3356,18 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 Camera.CameraSubject = char.Humanoid
             end
         end)
-    elseif wasThirdPersonActive then
+    elseif State.wasThirdPersonActive then
         pcall(function()
-            wasThirdPersonActive = false
+            State.wasThirdPersonActive = false
 
             LocalPlayer.CameraMinZoomDistance = 0.5
             LocalPlayer.CameraMaxZoomDistance = 0.5
-            LocalPlayer.CameraMode = savedCameraMode or Enum.CameraMode.LockFirstPerson
+            LocalPlayer.CameraMode = State.savedCameraMode or Enum.CameraMode.LockFirstPerson
 
             task.delay(0.05, function()
                 if not Settings.TP_Enabled then
-                    LocalPlayer.CameraMinZoomDistance = (savedMinZoom and savedMinZoom < 5) and savedMinZoom or 0.5
-                    LocalPlayer.CameraMaxZoomDistance = (savedMaxZoom and savedMaxZoom > 0.5) and savedMaxZoom or 128
+                    LocalPlayer.CameraMinZoomDistance = (State.savedMinZoom and State.savedMinZoom < 5) and State.savedMinZoom or 0.5
+                    LocalPlayer.CameraMaxZoomDistance = (State.savedMaxZoom and State.savedMaxZoom > 0.5) and State.savedMaxZoom or 128
                 end
             end)
 
@@ -3019,30 +3377,30 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
         end)
     end
     
-    colorCorrection.Saturation = Settings.Saturation_Value
+    if State.colorCorrection then
+        State.colorCorrection.Saturation = Settings.Saturation_Value
+    end
 
-    if BulletCharge > 0 then
-        BulletCharge = math.clamp(BulletCharge - (dt * 3), 0, 1)
+    if State.BulletCharge > 0 then
+        State.BulletCharge = math.clamp(State.BulletCharge - (dt * 3), 0, 1)
     end
 
     updateDesyncGhost(dt)
 
     pcall(function()
-        if fovCircle then
+        if State.fovCircle then
             local shouldShowFOV = Settings.Aimbot_ShowFOV and not Settings.Aimbot_360
-            fovCircle.Visible = shouldShowFOV
+            State.fovCircle.Visible = shouldShowFOV
             if shouldShowFOV then
-                fovCircle.Position = mouseLoc
-                fovCircle.Radius = Settings.Aimbot_FOV
-                fovCircle.Color = Settings.Aimbot_FOV_Color or Color3.fromRGB(0, 255, 150)
+                State.fovCircle.Position = mouseLoc
+                State.fovCircle.Radius = Settings.Aimbot_FOV
+                State.fovCircle.Color = Settings.Aimbot_FOV_Color or Color3.fromRGB(0, 255, 150)
             end
         end
     end)
 
-    -- Плавный векторный аимбот (работает в том числе сидя на транспорте)
-    if Settings.Aimbot_Enabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) and LockedTarget then
+    if Settings.Aimbot_Enabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) and State.LockedTarget then
         pcall(function()
-            -- Если игрок сидит в транспорте, принудительно освобождаем камеру от блокировки VehicleSeat
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             if hum and isPlayerSittingInVehicle(hum) then
                 if Camera.CameraType ~= Enum.CameraType.Custom and Camera.CameraType ~= Enum.CameraType.Scriptable then
@@ -3051,7 +3409,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
             end
 
             local muzzleOrig = Settings.SmartBallistics_Enabled and findWeaponMuzzlePosition() or Camera.CFrame.Position
-            local aimPos = getPredictedTargetPosition(LockedTarget, muzzleOrig)
+            local aimPos = getPredictedTargetPosition(State.LockedTarget, muzzleOrig)
             local targetCF = CFrame.lookAt(Camera.CFrame.Position, aimPos)
 
             local alpha
@@ -3071,9 +3429,9 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
             local basePos = mouseLoc
             local currentSize = Settings.Crosshair_Size
 
-            if (Settings.Aimbot_Enabled or Settings.SilentAim_Enabled) and LockedTarget then
+            if (Settings.Aimbot_Enabled or Settings.SilentAim_Enabled) and State.LockedTarget then
                 local muzzleOrig = Settings.SmartBallistics_Enabled and findWeaponMuzzlePosition() or Camera.CFrame.Position
-                local predWorldPos = getPredictedTargetPosition(LockedTarget, muzzleOrig)
+                local predWorldPos = getPredictedTargetPosition(State.LockedTarget, muzzleOrig)
                 local tPos, tOnScreen = Camera:WorldToViewportPoint(predWorldPos)
                 if tOnScreen then
                     basePos = Vector2.new(tPos.X, tPos.Y)
@@ -3082,13 +3440,13 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
             end
 
             local cColor = Settings.Crosshair_RGB and Color3.fromHSV((tick() % 3) / 3, 1, 1) or Settings.Crosshair_Color
-            crosshairText.Visible = true
-            crosshairText.Position = basePos + Vector2.new(0, currentSize + 10)
-            crosshairText.Color = cColor
+            State.crosshairText.Visible = true
+            State.crosshairText.Position = basePos + Vector2.new(0, currentSize + 10)
+            State.crosshairText.Color = cColor
 
             local rotationAngle = tick() * Settings.Crosshair_Speed
             for i = 1, 4 do
-                local line = crosshairLines[i]
+                local line = State.crosshairLines[i]
                 line.Visible = true
                 line.Color = cColor
                 local angle = math.rad((i * 90) + math.deg(rotationAngle))
@@ -3096,8 +3454,8 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 line.To = basePos + Vector2.new(math.cos(angle), math.sin(angle)) * currentSize
             end
         else
-            crosshairText.Visible = false
-            for i = 1, 4 do crosshairLines[i].Visible = false end
+            State.crosshairText.Visible = false
+            for i = 1, 4 do State.crosshairLines[i].Visible = false end
         end
     end)
 
@@ -3105,7 +3463,9 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
         char.Humanoid.WalkSpeed = Settings.Speed_Value
     end
 
-    -- ESP отрисовка
+    local L = State.ESP_Layout
+
+    -- ESP отрисовка на живых игроках (с учетом перетащенных позиций из ESP Preview)
     for player, drawings in pairs(espCache) do
         local character = player.Character
         local isVisible = false
@@ -3123,10 +3483,12 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                     if onScreen then
                         isVisible = true
                         
+                        local playerEspColor = isPlayerTeammateCached(player) and Settings.ESP_TeamColor or Settings.ESP_Color
+
                         local hat = character:FindFirstChild("ClientNeonHat")
                         if Settings.ESP_NeonHat then
                             if not hat then hat = createNeonHat(character) end
-                            if hat then hat.Color = Settings.ESP_Color; hat.Transparency = 0 end
+                            if hat then hat.Color = playerEspColor; hat.Transparency = 0 end
                         elseif hat then hat.Transparency = 1 end
 
                         local topPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
@@ -3137,13 +3499,16 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                         drawings.MainBox.Size = Vector2.new(boxWidth, boxHeight)
                         drawings.MainBox.Position = Vector2.new(topPos.X - boxWidth / 2, topPos.Y)
                         drawings.MainBox.Visible = Settings.ESP_Box
-                        drawings.MainBox.Color = Settings.ESP_Color
+                        drawings.MainBox.Color = playerEspColor
 
                         if Settings.ESP_Name then
                             drawings.NameText.Visible = true
                             drawings.NameText.Text = player.Name
-                            drawings.NameText.Position = Vector2.new(topPos.X, topPos.Y - 18)
-                            drawings.NameText.Color = Settings.ESP_Color
+                            drawings.NameText.Position = Vector2.new(
+                                topPos.X + (L.Name_X * boxWidth),
+                                topPos.Y + (L.Name_Y * boxHeight)
+                            )
+                            drawings.NameText.Color = playerEspColor
                         else
                             drawings.NameText.Visible = false
                         end
@@ -3154,8 +3519,8 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                         if Settings.ESP_HealthBar then
                             local barHeight = boxHeight
                             local barWidth = 3
-                            local barX = topPos.X - boxWidth / 2 - 6
-                            local barY = topPos.Y
+                            local barX = topPos.X + (L.HpBar_X * boxWidth)
+                            local barY = topPos.Y + (L.HpBar_Y * boxHeight)
 
                             drawings.HealthBarBg.Size = Vector2.new(barWidth, barHeight)
                             drawings.HealthBarBg.Position = Vector2.new(barX, barY)
@@ -3174,10 +3539,13 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                             drawings.HealthBarFill.Visible = false
                         end
 
-                        if Settings.ESP_HealthText and healthPercent < 1 then
+                        if Settings.ESP_HealthText then
                             drawings.HealthText.Visible = true
                             drawings.HealthText.Text = math.floor(humanoid.Health) .. " HP"
-                            drawings.HealthText.Position = Vector2.new(topPos.X - boxWidth / 2 - 25, topPos.Y + (boxHeight * (1 - healthPercent)) - 5)
+                            drawings.HealthText.Position = Vector2.new(
+                                topPos.X + (L.HpText_X * boxWidth),
+                                topPos.Y + (L.HpText_Y * boxHeight)
+                            )
                             drawings.HealthText.Color = Color3.fromRGB(255, 255, 255)
                         else
                             drawings.HealthText.Visible = false
@@ -3189,7 +3557,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                         drawings.HeadBox.Size = Vector2.new(hBoxHeight, hBoxHeight)
                         drawings.HeadBox.Position = Vector2.new(headPos.X - hBoxHeight / 2, headPos.Y - hBoxHeight / 2)
                         drawings.HeadBox.Visible = Settings.ESP_SkelHead
-                        drawings.HeadBox.Color = Settings.ESP_Color
+                        drawings.HeadBox.Color = playerEspColor
 
                         local function drawBone(line, p1, p2, connectOffset)
                             if p1 and p2 and Settings.ESP_SkelHead then
@@ -3199,7 +3567,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                                     line.From = connectOffset and Vector2.new(headPos.X, headPos.Y + hBoxHeight / 2) or Vector2.new(pos1.X, pos1.Y)
                                     line.To = Vector2.new(pos2.X, pos2.Y)
                                     line.Visible = true
-                                    line.Color = Settings.ESP_Color
+                                    line.Color = playerEspColor
                                     return
                                 end
                             end
@@ -3227,7 +3595,7 @@ end))
 -- ИНПУТЫ И БИНДЫ МЫШИ / КЛАВИАТУРЫ
 -- ==========================================
 table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if IsUnloaded then return end
+    if State.IsUnloaded then return end
 
     if not UserInputService:GetFocusedTextBox() then
         local zoomKeyName = "Z"
@@ -3244,8 +3612,8 @@ table.insert(Connections, UserInputService.InputBegan:Connect(function(input, ga
     if gameProcessed then return end
 
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        IsLMBDown = true
-        lastLocalClick = tick()
+        State.IsLMBDown = true
+        State.lastLocalClick = tick()
         if Settings.PeakKill_Enabled then startPeek() end
     end
 
@@ -3275,12 +3643,12 @@ table.insert(Connections, UserInputService.InputBegan:Connect(function(input, ga
 end))
 
 table.insert(Connections, UserInputService.InputEnded:Connect(function(input, gameProcessed)
-    if IsUnloaded then return end
+    if State.IsUnloaded then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        IsLMBDown = false
+        State.IsLMBDown = false
         if Settings.PeakKill_Enabled then stopPeek() end
     elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-        StickyTarget = nil
+        State.StickyTarget = nil
     end
 
     local zoomKeyName = "Z"
@@ -3294,18 +3662,10 @@ table.insert(Connections, UserInputService.InputEnded:Connect(function(input, ga
     end
 end))
 
--- ==============================================================================
--- LINORIALIB ИНТЕРФЕЙС (ИЗОЛИРОВАННЫЙ СКОУП ДЛЯ ЭКОНОМИИ РЕГИСТРОВ LUAU)
--- ==============================================================================
-local Window = Library:CreateWindow({
-    Title = 'Skeetparser by Fliriz',
-    Center = true,
-    AutoShow = true,
-    TabPadding = 2,
-    MenuFadeTime = 0.2
-})
-
 local function destroyLinoriaUI()
+    pcall(function()
+        if Preview.Gui then Preview.Gui:Destroy() end
+    end)
     pcall(function()
         if Window and Window.Holder then
             local sg = Window.Holder:FindFirstAncestorOfClass("ScreenGui")
@@ -3347,6 +3707,7 @@ local function destroyLinoriaUI()
     end)
 end
 
+-- Инициализация вкладок меню в отдельных блоках do ... end
 do
     task.defer(function()
         if Window.Holder then
@@ -3368,797 +3729,841 @@ do
     }
 
     -- 1. COMBAT
-    local aimbox = Tabs.Combat:AddLeftGroupbox('Aimbot')
-    aimbox:AddToggle('Aimbot_Enabled', {
-        Text = 'Enable Vector Aimbot (RMB)',
-        Default = false,
-        Callback = function(v) Settings.Aimbot_Enabled = v end
-    })
-    aimbox:AddToggle('Aimbot_StickyAim', {
-        Text = '🔒 Stick Aim (Не отпускать цель)',
-        Default = false,
-        Callback = function(v)
-            Settings.Aimbot_StickyAim = v
-            if not v then StickyTarget = nil end
-        end
-    })
-    aimbox:AddToggle('SilentAim_Enabled', {
-        Text = 'Silent Aim',
-        Default = false,
-        Callback = function(v) Settings.SilentAim_Enabled = v end
-    })
-    aimbox:AddDropdown('SilentAimMethod', {
-        Values = {"Raycast", "Mouse.Hit/Target"},
-        Default = 1,
-        Multi = false,
-        Text = 'Silent Aim Method',
-        Callback = function(v) Settings.SilentAimMethod = v end
-    })
-    aimbox:AddToggle('VisCheck_Enabled', {
-        Text = 'Visible Check',
-        Default = false,
-        Callback = function(v) Settings.VisCheck_Enabled = v end
-    })
-    aimbox:AddToggle('TeamCheck', {
-        Text = 'Team Check',
-        Default = false,
-        Callback = function(v) Settings.TeamCheck = v end
-    })
-    aimbox:AddDivider()
-    aimbox:AddToggle('Aimbot_DistCheck_Enabled', {
-        Text = '📏 Distance Check',
-        Default = true,
-        Callback = function(v) Settings.Aimbot_DistCheck_Enabled = v end
-    })
-    aimbox:AddSlider('Aimbot_MaxDistance', {
-        Text = 'Max Target Distance (Studs)',
-        Default = 800,
-        Min = 10,
-        Max = 2500,
-        Rounding = 0,
-        Callback = function(v) Settings.Aimbot_MaxDistance = v end
-    })
+    do
+        local aimbox = Tabs.Combat:AddLeftGroupbox('Aimbot')
+        aimbox:AddToggle('Aimbot_Enabled', {
+            Text = 'Enable Vector Aimbot (RMB)',
+            Default = false,
+            Callback = function(v) Settings.Aimbot_Enabled = v end
+        })
+        aimbox:AddToggle('Aimbot_StickyAim', {
+            Text = '🔒 Stick Aim (Не отпускать цель)',
+            Default = false,
+            Callback = function(v)
+                Settings.Aimbot_StickyAim = v
+                if not v then State.StickyTarget = nil end
+            end
+        })
+        aimbox:AddToggle('SilentAim_Enabled', {
+            Text = 'Silent Aim',
+            Default = false,
+            Callback = function(v) Settings.SilentAim_Enabled = v end
+        })
+        aimbox:AddDropdown('SilentAimMethod', {
+            Values = {"Raycast", "Mouse.Hit/Target"},
+            Default = 1,
+            Multi = false,
+            Text = 'Silent Aim Method',
+            Callback = function(v) Settings.SilentAimMethod = v end
+        })
+        aimbox:AddToggle('VisCheck_Enabled', {
+            Text = 'Visible Check',
+            Default = false,
+            Callback = function(v) Settings.VisCheck_Enabled = v end
+        })
+        aimbox:AddToggle('TeamCheck', {
+            Text = 'Team Check (Green Team ESP)',
+            Default = false,
+            Callback = function(v)
+                Settings.TeamCheck = v
+                table.clear(State.teamCheckCache)
+            end
+        })
+        aimbox:AddDivider()
+        aimbox:AddToggle('Aimbot_DistCheck_Enabled', {
+            Text = '📏 Distance Check',
+            Default = true,
+            Callback = function(v) Settings.Aimbot_DistCheck_Enabled = v end
+        })
+        aimbox:AddSlider('Aimbot_MaxDistance', {
+            Text = 'Max Target Distance (Studs)',
+            Default = 800,
+            Min = 10,
+            Max = 2500,
+            Rounding = 0,
+            Callback = function(v) Settings.Aimbot_MaxDistance = v end
+        })
 
-    local fovToggle = aimbox:AddToggle('Aimbot_ShowFOV', {
-        Text = 'Show FOV Circle',
-        Default = false,
-        Callback = function(v) Settings.Aimbot_ShowFOV = v end
-    })
-    fovToggle:AddColorPicker('Aimbot_FOV_Color', {
-        Default = Color3.fromRGB(0, 255, 150),
-        Title = 'FOV Circle Color',
-        Callback = function(c) Settings.Aimbot_FOV_Color = c end
-    })
+        local fovToggle = aimbox:AddToggle('Aimbot_ShowFOV', {
+            Text = 'Show FOV Circle',
+            Default = false,
+            Callback = function(v) Settings.Aimbot_ShowFOV = v end
+        })
+        fovToggle:AddColorPicker('Aimbot_FOV_Color', {
+            Default = Color3.fromRGB(0, 255, 150),
+            Title = 'FOV Circle Color',
+            Callback = function(c) Settings.Aimbot_FOV_Color = c end
+        })
 
-    aimbox:AddToggle('Aimbot_360', {
-        Text = '360 Degree FOV',
-        Default = false,
-        Callback = function(v) Settings.Aimbot_360 = v end
-    })
-    aimbox:AddDropdown('Aimbot_HitPart', {
-        Values = {'Head', 'UpperTorso', 'HumanoidRootPart'},
-        Default = 1,
-        Multi = false,
-        Text = 'Target Hitbox',
-        Callback = function(v) Settings.Aimbot_HitPart = v end
-    })
+        aimbox:AddToggle('Aimbot_360', {
+            Text = '360 Degree FOV',
+            Default = false,
+            Callback = function(v) Settings.Aimbot_360 = v end
+        })
+        aimbox:AddDropdown('Aimbot_HitPart', {
+            Values = {'Head', 'UpperTorso', 'HumanoidRootPart'},
+            Default = 1,
+            Multi = false,
+            Text = 'Target Hitbox',
+            Callback = function(v) Settings.Aimbot_HitPart = v end
+        })
 
-    local aimcfg = Tabs.Combat:AddRightGroupbox('Distance Vector & Prediction')
-    aimcfg:AddSlider('HitChance', {
-        Text = 'Hit Chance',
-        Default = 100,
-        Min = 0,
-        Max = 100,
-        Rounding = 1,
-        Callback = function(v) Settings.HitChance = v end
-    })
-    aimcfg:AddSlider('Aimbot_FOV', {
-        Text = 'FOV Radius',
-        Default = 150,
-        Min = 10,
-        Max = 800,
-        Rounding = 0,
-        Callback = function(v) Settings.Aimbot_FOV = v end
-    })
-    aimcfg:AddSlider('Aimbot_Smoothness', {
-        Text = 'Vector Smoothness (1 = Instant)',
-        Default = 0.2,
-        Min = 0.05,
-        Max = 1,
-        Rounding = 2,
-        Callback = function(v) Settings.Aimbot_Smoothness = v end
-    })
-    aimcfg:AddDivider()
-    aimcfg:AddToggle('SmartBallistics_Enabled', {
-        Text = '🏹 Smart Auto-Ballistics (Auto Weapon)',
-        Default = true,
-        Callback = function(v)
-            Settings.SmartBallistics_Enabled = v
-            setFustBulletTracerState(Settings.Fust_BulletTracer_Enabled)
-        end
-    })
-    aimcfg:AddDivider()
-    aimcfg:AddToggle('DistVector_Enabled', {
-        Text = '🎯 Distance Vector (Manual)',
-        Default = false,
-        Callback = function(v) Settings.DistVector_Enabled = v end
-    })
-    aimcfg:AddSlider('DistVector_UpScale', {
-        Text = 'Upward Scale (Выше от дистанции)',
-        Default = 1.5,
-        Min = 0,
-        Max = 10,
-        Rounding = 2,
-        Callback = function(v) Settings.DistVector_UpScale = v end
-    })
-    aimcfg:AddSlider('DistVector_StrafeScale', {
-        Text = 'Strafe Scale (Вбок от дистанции)',
-        Default = 1.2,
-        Min = 0,
-        Max = 10,
-        Rounding = 2,
-        Callback = function(v) Settings.DistVector_StrafeScale = v end
-    })
-    aimcfg:AddDivider()
-    aimcfg:AddToggle('Prediction_Enabled', {
-        Text = 'Simple Linear Prediction',
-        Default = false,
-        Callback = function(v) Settings.Prediction_Enabled = v end
-    })
-    aimcfg:AddSlider('Prediction_Value', {
-        Text = 'Linear Multiplier',
-        Default = 0.135,
-        Min = 0.01,
-        Max = 0.5,
-        Rounding = 3,
-        Callback = function(v) Settings.Prediction_Value = v end
-    })
+        local aimcfg = Tabs.Combat:AddRightGroupbox('Distance Vector & Prediction')
+        aimcfg:AddSlider('HitChance', {
+            Text = 'Hit Chance',
+            Default = 100,
+            Min = 0,
+            Max = 100,
+            Rounding = 1,
+            Callback = function(v) Settings.HitChance = v end
+        })
+        aimcfg:AddSlider('Aimbot_FOV', {
+            Text = 'FOV Radius',
+            Default = 150,
+            Min = 10,
+            Max = 800,
+            Rounding = 0,
+            Callback = function(v) Settings.Aimbot_FOV = v end
+        })
+        aimcfg:AddSlider('Aimbot_Smoothness', {
+            Text = 'Vector Smoothness (1 = Instant)',
+            Default = 0.2,
+            Min = 0.05,
+            Max = 1,
+            Rounding = 2,
+            Callback = function(v) Settings.Aimbot_Smoothness = v end
+        })
+        aimcfg:AddDivider()
+        aimcfg:AddToggle('SmartBallistics_Enabled', {
+            Text = '🏹 Smart Auto-Ballistics (Auto Weapon)',
+            Default = true,
+            Callback = function(v)
+                Settings.SmartBallistics_Enabled = v
+                setFustBulletTracerState(Settings.Fust_BulletTracer_Enabled)
+            end
+        })
+        aimcfg:AddDivider()
+        aimcfg:AddToggle('DistVector_Enabled', {
+            Text = '🎯 Distance Vector (Manual)',
+            Default = false,
+            Callback = function(v) Settings.DistVector_Enabled = v end
+        })
+        aimcfg:AddSlider('DistVector_UpScale', {
+            Text = 'Upward Scale (Выше от дистанции)',
+            Default = 1.5,
+            Min = 0,
+            Max = 10,
+            Rounding = 2,
+            Callback = function(v) Settings.DistVector_UpScale = v end
+        })
+        aimcfg:AddSlider('DistVector_StrafeScale', {
+            Text = 'Strafe Scale (Вбок от дистанции)',
+            Default = 1.2,
+            Min = 0,
+            Max = 10,
+            Rounding = 2,
+            Callback = function(v) Settings.DistVector_StrafeScale = v end
+        })
+        aimcfg:AddDivider()
+        aimcfg:AddToggle('Prediction_Enabled', {
+            Text = 'Simple Linear Prediction',
+            Default = false,
+            Callback = function(v) Settings.Prediction_Enabled = v end
+        })
+        aimcfg:AddSlider('Prediction_Value', {
+            Text = 'Linear Multiplier',
+            Default = 0.135,
+            Min = 0.01,
+            Max = 0.5,
+            Rounding = 3,
+            Callback = function(v) Settings.Prediction_Value = v end
+        })
+    end
 
     -- 2. WEAPON
-    local wpnbox = Tabs.Weapon:AddLeftGroupbox('Weapon Exploits')
-    wpnbox:AddToggle('Wallbang_Enabled', {
-        Text = 'Wallbang',
-        Default = false,
-        Callback = function(v)
-            Settings.Wallbang_Enabled = v
-            if not v then restoreWalls() end
-        end
-    })
-    wpnbox:AddToggle('NoRecoil_Enabled', {
-        Text = 'No Recoil',
-        Default = false,
-        Callback = function(v) Settings.NoRecoil_Enabled = v end
-    })
-    wpnbox:AddToggle('NoSpread_Enabled', {
-        Text = 'No Spread',
-        Default = false,
-        Callback = function(v) Settings.NoSpread_Enabled = v end
-    })
-    wpnbox:AddToggle('InfAmmo_Enabled', {
-        Text = 'Inf Ammo (999)',
-        Default = false,
-        Callback = function(v) Settings.InfAmmo_Enabled = v end
-    })
+    do
+        local wpnbox = Tabs.Weapon:AddLeftGroupbox('Weapon Exploits')
+        wpnbox:AddToggle('Wallbang_Enabled', {
+            Text = 'Wallbang',
+            Default = false,
+            Callback = function(v)
+                Settings.Wallbang_Enabled = v
+                if not v then restoreWalls() end
+            end
+        })
+        wpnbox:AddToggle('NoRecoil_Enabled', {
+            Text = 'No Recoil',
+            Default = false,
+            Callback = function(v) Settings.NoRecoil_Enabled = v end
+        })
+        wpnbox:AddToggle('NoSpread_Enabled', {
+            Text = 'No Spread',
+            Default = false,
+            Callback = function(v) Settings.NoSpread_Enabled = v end
+        })
+        wpnbox:AddToggle('InfAmmo_Enabled', {
+            Text = 'Inf Ammo (999)',
+            Default = false,
+            Callback = function(v) Settings.InfAmmo_Enabled = v end
+        })
 
-    local chamsbox = Tabs.Weapon:AddRightGroupbox('Viewmodel Chams')
-    local armToggle = chamsbox:AddToggle('Arm_Chams_Enabled', {
-        Text = 'Arm Chams',
-        Default = false,
-        Callback = function(v) Settings.Arm_Chams_Enabled = v; updateAllChams() end
-    })
-    armToggle:AddColorPicker('Arm_Chams_Color', {
-        Default = Color3.fromRGB(0, 170, 255),
-        Title = 'Arm Color',
-        Callback = function(c) Settings.Arm_Chams_Color = c; updateAllChams() end
-    })
-    chamsbox:AddDropdown('Arm_Chams_Material', {
-        Values = {'Neon', 'ForceField', 'Glass', 'Plastic', 'Foil'},
-        Default = 1,
-        Multi = false,
-        Text = 'Arm Material',
-        Callback = function(v) Settings.Arm_Chams_Material = v; updateAllChams() end
-    })
+        local chamsbox = Tabs.Weapon:AddRightGroupbox('Viewmodel Chams')
+        local armToggle = chamsbox:AddToggle('Arm_Chams_Enabled', {
+            Text = 'Arm Chams',
+            Default = false,
+            Callback = function(v) Settings.Arm_Chams_Enabled = v; updateAllChams() end
+        })
+        armToggle:AddColorPicker('Arm_Chams_Color', {
+            Default = Color3.fromRGB(0, 170, 255),
+            Title = 'Arm Color',
+            Callback = function(c) Settings.Arm_Chams_Color = c; updateAllChams() end
+        })
+        chamsbox:AddDropdown('Arm_Chams_Material', {
+            Values = {'Neon', 'ForceField', 'Glass', 'Plastic', 'Foil'},
+            Default = 1,
+            Multi = false,
+            Text = 'Arm Material',
+            Callback = function(v) Settings.Arm_Chams_Material = v; updateAllChams() end
+        })
 
-    local gunToggle = chamsbox:AddToggle('Gun_Chams_Enabled', {
-        Text = 'Gun Chams',
-        Default = false,
-        Callback = function(v) Settings.Gun_Chams_Enabled = v; updateAllChams() end
-    })
-    gunToggle:AddColorPicker('Gun_Chams_Color', {
-        Default = Color3.fromRGB(0, 255, 128),
-        Title = 'Gun Color',
-        Callback = function(c) Settings.Gun_Chams_Color = c; updateAllChams() end
-    })
-    chamsbox:AddDropdown('Gun_Chams_Material', {
-        Values = {'Neon', 'ForceField', 'Glass', 'Plastic', 'Foil'},
-        Default = 1,
-        Multi = false,
-        Text = 'Gun Material',
-        Callback = function(v) Settings.Gun_Chams_Material = v; updateAllChams() end
-    })
+        local gunToggle = chamsbox:AddToggle('Gun_Chams_Enabled', {
+            Text = 'Gun Chams',
+            Default = false,
+            Callback = function(v) Settings.Gun_Chams_Enabled = v; updateAllChams() end
+        })
+        gunToggle:AddColorPicker('Gun_Chams_Color', {
+            Default = Color3.fromRGB(0, 255, 128),
+            Title = 'Gun Color',
+            Callback = function(c) Settings.Gun_Chams_Color = c; updateAllChams() end
+        })
+        chamsbox:AddDropdown('Gun_Chams_Material', {
+            Values = {'Neon', 'ForceField', 'Glass', 'Plastic', 'Foil'},
+            Default = 1,
+            Multi = false,
+            Text = 'Gun Material',
+            Callback = function(v) Settings.Gun_Chams_Material = v; updateAllChams() end
+        })
 
-    local offsetbox = Tabs.Weapon:AddRightGroupbox('Viewmodel Offset')
-    offsetbox:AddToggle('Viewmodel_Offset_Enabled', {
-        Text = 'Enable Offset',
-        Default = false,
-        Callback = function(v) 
-            Settings.Viewmodel_Offset_Enabled = v 
-            if not v then
-                for motor, c0 in pairs(State.originalC0s) do
-                    if motor and motor.Parent then motor.C0 = c0 end
+        local offsetbox = Tabs.Weapon:AddRightGroupbox('Viewmodel Offset')
+        offsetbox:AddToggle('Viewmodel_Offset_Enabled', {
+            Text = 'Enable Offset',
+            Default = false,
+            Callback = function(v) 
+                Settings.Viewmodel_Offset_Enabled = v 
+                if not v then
+                    for motor, c0 in pairs(State.originalC0s) do
+                        if motor and motor.Parent then motor.C0 = c0 end
+                    end
                 end
             end
-        end
-    })
-    offsetbox:AddSlider('Viewmodel_Offset_X', {
-        Text = 'Offset X (Left/Right)',
-        Default = 0,
-        Min = -5,
-        Max = 5,
-        Rounding = 1,
-        Callback = function(v) Settings.Viewmodel_Offset_X = v end
-    })
-    offsetbox:AddSlider('Viewmodel_Offset_Y', {
-        Text = 'Offset Y (Up/Down)',
-        Default = 0,
-        Min = -5,
-        Max = 5,
-        Rounding = 1,
-        Callback = function(v) Settings.Viewmodel_Offset_Y = v end
-    })
-    offsetbox:AddSlider('Viewmodel_Offset_Z', {
-        Text = 'Offset Z (Forward/Back)',
-        Default = 0,
-        Min = -5,
-        Max = 5,
-        Rounding = 1,
-        Callback = function(v) Settings.Viewmodel_Offset_Z = v end
-    })
+        })
+        offsetbox:AddSlider('Viewmodel_Offset_X', {
+            Text = 'Offset X (Left/Right)',
+            Default = 0,
+            Min = -5,
+            Max = 5,
+            Rounding = 1,
+            Callback = function(v) Settings.Viewmodel_Offset_X = v end
+        })
+        offsetbox:AddSlider('Viewmodel_Offset_Y', {
+            Text = 'Offset Y (Up/Down)',
+            Default = 0,
+            Min = -5,
+            Max = 5,
+            Rounding = 1,
+            Callback = function(v) Settings.Viewmodel_Offset_Y = v end
+        })
+        offsetbox:AddSlider('Viewmodel_Offset_Z', {
+            Text = 'Offset Z (Forward/Back)',
+            Default = 0,
+            Min = -5,
+            Max = 5,
+            Rounding = 1,
+            Callback = function(v) Settings.Viewmodel_Offset_Z = v end
+        })
+    end
 
     -- 3. VISUALS
-    local espbox = Tabs.Visuals:AddLeftGroupbox('Player ESP')
-    local espToggle = espbox:AddToggle('ESP_Enabled', {
-        Text = 'Enable ESP',
-        Default = false,
-        Callback = function(v) Settings.ESP_Enabled = v end
-    })
-    espToggle:AddColorPicker('ESP_Color', {
-        Default = Color3.fromRGB(255, 80, 80),
-        Title = 'ESP Visual Color',
-        Callback = function(c) Settings.ESP_Color = c end
-    })
+    do
+        local espbox = Tabs.Visuals:AddLeftGroupbox('Player ESP')
+        local espToggle = espbox:AddToggle('ESP_Enabled', {
+            Text = 'Enable ESP',
+            Default = false,
+            Callback = function(v) Settings.ESP_Enabled = v end
+        })
+        espToggle:AddColorPicker('ESP_Color', {
+            Default = Color3.fromRGB(255, 80, 80),
+            Title = 'ESP Visual Color',
+            Callback = function(c) Settings.ESP_Color = c end
+        })
 
-    espbox:AddToggle('ESP_Box', {
-        Text = '2D Box',
-        Default = false,
-        Callback = function(v) Settings.ESP_Box = v end
-    })
-    espbox:AddToggle('ESP_SkelHead', {
-        Text = 'Skeleton & Head Circle',
-        Default = false,
-        Callback = function(v) Settings.ESP_SkelHead = v end
-    })
-    espbox:AddToggle('ESP_NeonHat', {
-        Text = 'Neon Hat',
-        Default = false,
-        Callback = function(v) Settings.ESP_NeonHat = v end
-    })
-    espbox:AddToggle('ESP_Name', {
-        Text = 'Nicknames',
-        Default = false,
-        Callback = function(v) Settings.ESP_Name = v end
-    })
-    espbox:AddToggle('ESP_HealthBar', {
-        Text = 'Health Bar',
-        Default = false,
-        Callback = function(v) Settings.ESP_HealthBar = v end
-    })
-    espbox:AddToggle('ESP_HealthText', {
-        Text = 'Health Text',
-        Default = false,
-        Callback = function(v) Settings.ESP_HealthText = v end
-    })
-    espbox:AddDivider()
-    espbox:AddToggle('Fust_InvCheck_Enabled', {
-        Text = 'Inv ESP (Инвентарь + Броня)',
-        Default = false,
-        Callback = function(v)
-            Settings.Fust_InvCheck_Enabled = v
-            if not v then updateInvCheck() end
-        end
-    })
+        espbox:AddToggle('ESP_Preview_Enabled', {
+            Text = 'Show 2D ESP Preview Window',
+            Default = true,
+            Callback = function(v) Settings.ESP_Preview_Enabled = v end
+        })
 
-    local fustVisBox = Tabs.Visuals:AddLeftGroupbox('Fust Survival Visuals & Zoom')
-    fustVisBox:AddToggle('Fust_CarEsp_Enabled', {
-        Text = 'Vehicle ESP (Транспорт)',
-        Default = false,
-        Callback = function(v) setFustCarEspState(v) end
-    })
-    fustVisBox:AddDivider()
-    local zoomToggle = fustVisBox:AddToggle('Fust_Zoom_Enabled', {
-        Text = 'Hold Zoom',
-        Default = false,
-        Callback = function(v)
-            Settings.Fust_Zoom_Enabled = v
-            if not v then
-                isHoldingZoomKey = false
-                isZoomingProcess = false
-                if Camera then Camera.FieldOfView = baseGameFOV end
-                UserInputService.MouseDeltaSensitivity = savedBaseMouseSens
+        espbox:AddButton('Reset ESP Positions', function()
+            resetEspPositions()
+        end)
+
+        espbox:AddToggle('ESP_Box', {
+            Text = '2D Box',
+            Default = false,
+            Callback = function(v) Settings.ESP_Box = v end
+        })
+        espbox:AddToggle('ESP_SkelHead', {
+            Text = 'Skeleton & Head Circle',
+            Default = false,
+            Callback = function(v) Settings.ESP_SkelHead = v end
+        })
+        espbox:AddToggle('ESP_NeonHat', {
+            Text = 'Neon Hat',
+            Default = false,
+            Callback = function(v) Settings.ESP_NeonHat = v end
+        })
+        espbox:AddToggle('ESP_Name', {
+            Text = 'Nicknames (Draggable)',
+            Default = false,
+            Callback = function(v) Settings.ESP_Name = v end
+        })
+        espbox:AddToggle('ESP_HealthBar', {
+            Text = 'Health Bar (Draggable)',
+            Default = false,
+            Callback = function(v) Settings.ESP_HealthBar = v end
+        })
+        espbox:AddToggle('ESP_HealthText', {
+            Text = 'Health Text (Draggable)',
+            Default = false,
+            Callback = function(v) Settings.ESP_HealthText = v end
+        })
+        espbox:AddDivider()
+        espbox:AddToggle('Fust_InvCheck_Enabled', {
+            Text = 'Inv ESP (Draggable Icons)',
+            Default = false,
+            Callback = function(v)
+                Settings.Fust_InvCheck_Enabled = v
+                State.lastInvUpdate = 0
+                updateInvCheck()
             end
-        end
-    })
-    zoomToggle:AddKeyPicker('Fust_Zoom_Key', { Default = 'Z', Mode = 'Hold', Text = 'Hold Zoom Key' })
-    fustVisBox:AddSlider('Fust_Zoom_FOV', {
-        Text = 'Zoom Target FOV',
-        Default = 20,
-        Min = 5,
-        Max = 60,
-        Rounding = 0,
-        Callback = function(v) Settings.Fust_Zoom_FOV = v end
-    })
+        })
+        espbox:AddSlider('Fust_InvCheck_Size', {
+            Text = 'Inv Icon Size (Размер иконок)',
+            Default = 24,
+            Min = 14,
+            Max = 50,
+            Rounding = 0,
+            Callback = function(v)
+                Settings.Fust_InvCheck_Size = v
+                State.lastInvUpdate = 0
+                if Settings.Fust_InvCheck_Enabled then
+                    updateInvCheck()
+                end
+            end
+        })
 
-    local envbox = Tabs.Visuals:AddRightGroupbox('World & Local Player')
-    local tracerToggle = envbox:AddToggle('Tracers_Enabled', {
-        Text = 'Plasma Tracers',
-        Default = false,
-        Callback = function(v) Settings.Tracers_Enabled = v end
-    })
-    tracerToggle:AddColorPicker('Tracer_Color', {
-        Default = Color3.fromRGB(0, 170, 255),
-        Title = 'Tracer Color',
-        Callback = function(c) Settings.Tracer_Color = c end
-    })
+        local fustVisBox = Tabs.Visuals:AddLeftGroupbox('Fust Survival Visuals & Zoom')
+        fustVisBox:AddToggle('Fust_CarEsp_Enabled', {
+            Text = 'Vehicle ESP (Транспорт)',
+            Default = false,
+            Callback = function(v) setFustCarEspState(v) end
+        })
+        fustVisBox:AddDivider()
+        local zoomToggle = fustVisBox:AddToggle('Fust_Zoom_Enabled', {
+            Text = 'Hold Zoom',
+            Default = false,
+            Callback = function(v)
+                Settings.Fust_Zoom_Enabled = v
+                if not v then
+                    State.isHoldingZoomKey = false
+                    State.isZoomingProcess = false
+                    if Camera then Camera.FieldOfView = State.baseGameFOV end
+                    UserInputService.MouseDeltaSensitivity = State.savedBaseMouseSens
+                end
+            end
+        })
+        zoomToggle:AddKeyPicker('Fust_Zoom_Key', { Default = 'Z', Mode = 'Hold', Text = 'Hold Zoom Key' })
+        fustVisBox:AddSlider('Fust_Zoom_FOV', {
+            Text = 'Zoom Target FOV',
+            Default = 20,
+            Min = 5,
+            Max = 60,
+            Rounding = 0,
+            Callback = function(v) Settings.Fust_Zoom_FOV = v end
+        })
 
-    envbox:AddToggle('Fust_BulletTracer_Enabled', {
-        Text = 'bullet tracr (fust sv by fliriz)',
-        Default = false,
-        Callback = function(v) setFustBulletTracerState(v) end
-    })
+        local envbox = Tabs.Visuals:AddRightGroupbox('World & Local Player')
+        local tracerToggle = envbox:AddToggle('Tracers_Enabled', {
+            Text = 'Plasma Tracers',
+            Default = false,
+            Callback = function(v) Settings.Tracers_Enabled = v end
+        })
+        tracerToggle:AddColorPicker('Tracer_Color', {
+            Default = Color3.fromRGB(0, 170, 255),
+            Title = 'Tracer Color',
+            Callback = function(c) Settings.Tracer_Color = c end
+        })
 
-    envbox:AddToggle('NightMode_Enabled', {
-        Text = '🌙 Night Mode + Galaxy',
-        Default = false,
-        Callback = function(v)
-            Settings.NightMode_Enabled = v
-            updateLighting()
-        end
-    })
+        envbox:AddToggle('Fust_BulletTracer_Enabled', {
+            Text = 'bullet tracr (fust sv by fliriz)',
+            Default = false,
+            Callback = function(v) setFustBulletTracerState(v) end
+        })
 
-    envbox:AddToggle('GalaxySky_Enabled', {
-        Text = '🌌 Galaxy Sky Only (With FullBright)',
-        Default = false,
-        Callback = function(v)
-            Settings.GalaxySky_Enabled = v
-            updateLighting()
-        end
-    })
-
-    envbox:AddToggle('FullBright_Enabled', {
-        Text = '☀️ FullBright',
-        Default = false,
-        Callback = function(v)
-            Settings.FullBright_Enabled = v
-            updateLighting()
-        end
-    })
-
-    envbox:AddSlider('FullBright_Brightness', {
-        Text = 'FullBright Intensity',
-        Default = 2.5,
-        Min = 0.5,
-        Max = 10,
-        Rounding = 1,
-        Callback = function(v)
-            Settings.FullBright_Brightness = v
-            if Settings.FullBright_Enabled then
+        envbox:AddToggle('NightMode_Enabled', {
+            Text = '🌙 Night Mode + Galaxy',
+            Default = false,
+            Callback = function(v)
+                Settings.NightMode_Enabled = v
                 updateLighting()
             end
-        end
-    })
+        })
 
-    envbox:AddToggle('Fust_NoFog_Enabled', {
-        Text = 'No Fog (Fust)',
-        Default = false,
-        Callback = function(v)
-            Settings.Fust_NoFog_Enabled = v
-            updateLighting()
-        end
-    })
+        envbox:AddToggle('GalaxySky_Enabled', {
+            Text = '🌌 Galaxy Sky Only (With FullBright)',
+            Default = false,
+            Callback = function(v)
+                Settings.GalaxySky_Enabled = v
+                updateLighting()
+            end
+        })
 
-    envbox:AddToggle('Fust_NoShake_Enabled', {
-        Text = 'No Camera Shake',
-        Default = false,
-        Callback = function(v) Settings.Fust_NoShake_Enabled = v end
-    })
+        envbox:AddToggle('FullBright_Enabled', {
+            Text = '☀️ FullBright',
+            Default = false,
+            Callback = function(v)
+                Settings.FullBright_Enabled = v
+                updateLighting()
+            end
+        })
 
-    envbox:AddSlider('Saturation_Value', {
-        Text = 'Color Saturation',
-        Default = 0,
-        Min = -1,
-        Max = 3,
-        Rounding = 1,
-        Callback = function(v) Settings.Saturation_Value = v; colorCorrection.Saturation = v end
-    })
+        envbox:AddSlider('FullBright_Brightness', {
+            Text = 'FullBright Intensity',
+            Default = 2.5,
+            Min = 0.5,
+            Max = 10,
+            Rounding = 1,
+            Callback = function(v)
+                Settings.FullBright_Brightness = v
+                if Settings.FullBright_Enabled then
+                    updateLighting()
+                end
+            end
+        })
 
-    local localChamsToggle = envbox:AddToggle('Local_Chams_Enabled', {
-        Text = 'Local Player Chams',
-        Default = false,
-        Callback = function(v) Settings.Local_Chams_Enabled = v; updateAllChams() end
-    })
-    localChamsToggle:AddColorPicker('Local_Chams_Color', {
-        Default = Color3.fromRGB(200, 0, 255),
-        Title = 'Local Player Color',
-        Callback = function(c) Settings.Local_Chams_Color = c; updateAllChams() end
-    })
-    envbox:AddDropdown('Local_Chams_Material', {
-        Values = {'Neon', 'ForceField', 'Glass', 'Plastic', 'Foil'},
-        Default = 1,
-        Multi = false,
-        Text = 'Local Chams Material',
-        Callback = function(v) Settings.Local_Chams_Material = v; updateAllChams() end
-    })
+        envbox:AddToggle('Fust_NoFog_Enabled', {
+            Text = 'No Fog (Fust)',
+            Default = false,
+            Callback = function(v)
+                Settings.Fust_NoFog_Enabled = v
+                updateLighting()
+            end
+        })
 
-    local fxbox = Tabs.Visuals:AddRightGroupbox('Hit & Kill Effects')
-    local hitFxToggle = fxbox:AddToggle('HitEffect_Enabled', {
-        Text = 'Enable Hit Effect',
-        Default = false,
-        Callback = function(v) Settings.HitEffect_Enabled = v end
-    })
-    hitFxToggle:AddColorPicker('HitEffect_Color', {
-        Default = Color3.fromRGB(0, 255, 255),
-        Title = 'Hit Particles Color',
-        Callback = function(c) Settings.HitEffect_Color = c end
-    })
+        envbox:AddToggle('Fust_NoShake_Enabled', {
+            Text = 'No Camera Shake',
+            Default = false,
+            Callback = function(v) Settings.Fust_NoShake_Enabled = v end
+        })
 
-    local killFxToggle = fxbox:AddToggle('KillEffect_Enabled', {
-        Text = 'Enable Kill Effect',
-        Default = false,
-        Callback = function(v) Settings.KillEffect_Enabled = v end
-    })
-    killFxToggle:AddColorPicker('KillEffect_Color', {
-        Default = Color3.fromRGB(200, 220, 255),
-        Title = 'Ghost Color',
-        Callback = function(c) Settings.KillEffect_Color = c end
-    })
+        envbox:AddSlider('Saturation_Value', {
+            Text = 'Color Saturation',
+            Default = 0,
+            Min = -1,
+            Max = 3,
+            Rounding = 1,
+            Callback = function(v)
+                Settings.Saturation_Value = v
+                if State.colorCorrection then State.colorCorrection.Saturation = v end
+            end
+        })
+
+        local localChamsToggle = envbox:AddToggle('Local_Chams_Enabled', {
+            Text = 'Local Player Chams',
+            Default = false,
+            Callback = function(v) Settings.Local_Chams_Enabled = v; updateAllChams() end
+        })
+        localChamsToggle:AddColorPicker('Local_Chams_Color', {
+            Default = Color3.fromRGB(200, 0, 255),
+            Title = 'Local Player Color',
+            Callback = function(c) Settings.Local_Chams_Color = c; updateAllChams() end
+        })
+        envbox:AddDropdown('Local_Chams_Material', {
+            Values = {'Neon', 'ForceField', 'Glass', 'Plastic', 'Foil'},
+            Default = 1,
+            Multi = false,
+            Text = 'Local Chams Material',
+            Callback = function(v) Settings.Local_Chams_Material = v; updateAllChams() end
+        })
+
+        local fxbox = Tabs.Visuals:AddRightGroupbox('Hit & Kill Effects')
+        local hitFxToggle = fxbox:AddToggle('HitEffect_Enabled', {
+            Text = 'Enable Hit Effect',
+            Default = false,
+            Callback = function(v) Settings.HitEffect_Enabled = v end
+        })
+        hitFxToggle:AddColorPicker('HitEffect_Color', {
+            Default = Color3.fromRGB(0, 255, 255),
+            Title = 'Hit Particles Color',
+            Callback = function(c) Settings.HitEffect_Color = c end
+        })
+
+        local killFxToggle = fxbox:AddToggle('KillEffect_Enabled', {
+            Text = 'Enable Kill Effect',
+            Default = false,
+            Callback = function(v) Settings.KillEffect_Enabled = v end
+        })
+        killFxToggle:AddColorPicker('KillEffect_Color', {
+            Default = Color3.fromRGB(200, 220, 255),
+            Title = 'Ghost Color',
+            Callback = function(c) Settings.KillEffect_Color = c end
+        })
+    end
 
     -- 4. CROSSHAIR
-    local crossbox = Tabs.Crosshair:AddLeftGroupbox('Crosshair')
-    local crossToggle = crossbox:AddToggle('Crosshair_Enabled', {
-        Text = 'Spinning Crosshair',
-        Default = false,
-        Callback = function(v) Settings.Crosshair_Enabled = v end
-    })
-    crossToggle:AddColorPicker('Crosshair_Color', {
-        Default = Color3.fromRGB(0, 255, 128),
-        Title = 'Crosshair Color',
-        Callback = function(c) Settings.Crosshair_Color = c end
-    })
+    do
+        local crossbox = Tabs.Crosshair:AddLeftGroupbox('Crosshair')
+        local crossToggle = crossbox:AddToggle('Crosshair_Enabled', {
+            Text = 'Spinning Crosshair',
+            Default = false,
+            Callback = function(v) Settings.Crosshair_Enabled = v end
+        })
+        crossToggle:AddColorPicker('Crosshair_Color', {
+            Default = Color3.fromRGB(0, 255, 128),
+            Title = 'Crosshair Color',
+            Callback = function(c) Settings.Crosshair_Color = c end
+        })
 
-    crossbox:AddToggle('Crosshair_RGB', {
-        Text = 'RGB Chroma Mode',
-        Default = false,
-        Callback = function(v) Settings.Crosshair_RGB = v end
-    })
-    crossbox:AddSlider('Crosshair_Size', {
-        Text = 'Size',
-        Default = 12,
-        Min = 6,
-        Max = 30,
-        Rounding = 0,
-        Callback = function(v) Settings.Crosshair_Size = v end
-    })
-    crossbox:AddSlider('Crosshair_Speed', {
-        Text = 'Rotation Speed',
-        Default = 4,
-        Min = 1,
-        Max = 10,
-        Rounding = 0,
-        Callback = function(v) Settings.Crosshair_Speed = v end
-    })
+        crossbox:AddToggle('Crosshair_RGB', {
+            Text = 'RGB Chroma Mode',
+            Default = false,
+            Callback = function(v) Settings.Crosshair_RGB = v end
+        })
+        crossbox:AddSlider('Crosshair_Size', {
+            Text = 'Size',
+            Default = 12,
+            Min = 6,
+            Max = 30,
+            Rounding = 0,
+            Callback = function(v) Settings.Crosshair_Size = v end
+        })
+        crossbox:AddSlider('Crosshair_Speed', {
+            Text = 'Rotation Speed',
+            Default = 4,
+            Min = 1,
+            Max = 10,
+            Rounding = 0,
+            Callback = function(v) Settings.Crosshair_Speed = v end
+        })
+    end
 
     -- 5. ANTI-AIM
-    local cs2aabox = Tabs.AntiAim:AddLeftGroupbox('CS2 Anti-Aim')
-    cs2aabox:AddToggle('AACSP_Enabled', {
-        Text = 'AA CS2 (Server Sync)',
-        Default = false,
-        Callback = function(v) Settings.AACSP_Enabled = v end
-    })
-    cs2aabox:AddToggle('AACSP_Local_Enabled', {
-        Text = 'AA CS2 (Local Client Only)',
-        Default = false,
-        Callback = function(v) Settings.AACSP_Local_Enabled = v end
-    })
-    cs2aabox:AddToggle('SpinbotCS_Enabled', {
-        Text = 'Spinbot CS2',
-        Default = false,
-        Callback = function(v) Settings.SpinbotCS_Enabled = v end
-    })
-    cs2aabox:AddSlider('SpinbotCS_Speed', {
-        Text = 'Spinbot Speed',
-        Default = 25,
-        Min = 5,
-        Max = 60,
-        Rounding = 0,
-        Callback = function(v) Settings.SpinbotCS_Speed = v end
-    })
+    do
+        local cs2aabox = Tabs.AntiAim:AddLeftGroupbox('CS2 Anti-Aim')
+        cs2aabox:AddToggle('AACSP_Enabled', {
+            Text = 'AA CS2 (Server Sync)',
+            Default = false,
+            Callback = function(v) Settings.AACSP_Enabled = v end
+        })
+        cs2aabox:AddToggle('AACSP_Local_Enabled', {
+            Text = 'AA CS2 (Local Client Only)',
+            Default = false,
+            Callback = function(v) Settings.AACSP_Local_Enabled = v end
+        })
+        cs2aabox:AddToggle('SpinbotCS_Enabled', {
+            Text = 'Spinbot CS2',
+            Default = false,
+            Callback = function(v) Settings.SpinbotCS_Enabled = v end
+        })
+        cs2aabox:AddSlider('SpinbotCS_Speed', {
+            Text = 'Spinbot Speed',
+            Default = 25,
+            Min = 5,
+            Max = 60,
+            Rounding = 0,
+            Callback = function(v) Settings.SpinbotCS_Speed = v end
+        })
 
-    local legacybox = Tabs.AntiAim:AddRightGroupbox('Legacy & Camera')
-    local tpToggle = legacybox:AddToggle('TP_Enabled', {
-        Text = 'Third Person',
-        Default = false,
-        Callback = function(v) Settings.TP_Enabled = v end
-    })
-    tpToggle:AddKeyPicker('TP_Key', { Default = 'V', SyncToggleState = true, Mode = 'Toggle', Text = 'Third Person' })
+        local legacybox = Tabs.AntiAim:AddRightGroupbox('Legacy & Camera')
+        local tpToggle = legacybox:AddToggle('TP_Enabled', {
+            Text = 'Third Person',
+            Default = false,
+            Callback = function(v) Settings.TP_Enabled = v end
+        })
+        tpToggle:AddKeyPicker('TP_Key', { Default = 'V', SyncToggleState = true, Mode = 'Toggle', Text = 'Third Person' })
 
-    legacybox:AddSlider('TP_Distance', {
-        Text = 'Third Person Distance',
-        Default = 12,
-        Min = 5,
-        Max = 50,
-        Rounding = 0,
-        Callback = function(v) Settings.TP_Distance = v end
-    })
-    legacybox:AddToggle('AA_Enabled', {
-        Text = 'Legacy Anti-Aim',
-        Default = false,
-        Callback = function(v) Settings.AA_Enabled = v end
-    })
-    legacybox:AddDropdown('AA_Yaw', {
-        Values = {'None', 'Backward', 'Spinbot', 'Jitter'},
-        Default = 1,
-        Multi = false,
-        Text = 'Yaw Angle',
-        Callback = function(v) Settings.AA_Yaw = v end
-    })
-    legacybox:AddDropdown('AA_Pitch', {
-        Values = {'None', 'Down', 'Up', 'Crazy'},
-        Default = 1,
-        Multi = false,
-        Text = 'Pitch Angle',
-        Callback = function(v) Settings.AA_Pitch = v end
-    })
-    legacybox:AddDropdown('AA_Lean', {
-        Values = {'None', 'Left', 'Right', 'Jitter'},
-        Default = 1,
-        Multi = false,
-        Text = 'Lean Angle',
-        Callback = function(v) Settings.AA_Lean = v end
-    })
-    legacybox:AddSlider('AA_SpinSpeed', {
-        Text = 'Legacy Spin Speed',
-        Default = 15,
-        Min = 5,
-        Max = 50,
-        Rounding = 0,
-        Callback = function(v) Settings.AA_SpinSpeed = v end
-    })
+        legacybox:AddSlider('TP_Distance', {
+            Text = 'Third Person Distance',
+            Default = 12,
+            Min = 5,
+            Max = 50,
+            Rounding = 0,
+            Callback = function(v) Settings.TP_Distance = v end
+        })
+        legacybox:AddToggle('AA_Enabled', {
+            Text = 'Legacy Anti-Aim',
+            Default = false,
+            Callback = function(v) Settings.AA_Enabled = v end
+        })
+        legacybox:AddDropdown('AA_Yaw', {
+            Values = {'None', 'Backward', 'Spinbot', 'Jitter'},
+            Default = 1,
+            Multi = false,
+            Text = 'Yaw Angle',
+            Callback = function(v) Settings.AA_Yaw = v end
+        })
+        legacybox:AddDropdown('AA_Pitch', {
+            Values = {'None', 'Down', 'Up', 'Crazy'},
+            Default = 1,
+            Multi = false,
+            Text = 'Pitch Angle',
+            Callback = function(v) Settings.AA_Pitch = v end
+        })
+        legacybox:AddDropdown('AA_Lean', {
+            Values = {'None', 'Left', 'Right', 'Jitter'},
+            Default = 1,
+            Multi = false,
+            Text = 'Lean Angle',
+            Callback = function(v) Settings.AA_Lean = v end
+        })
+        legacybox:AddSlider('AA_SpinSpeed', {
+            Text = 'Legacy Spin Speed',
+            Default = 15,
+            Min = 5,
+            Max = 50,
+            Rounding = 0,
+            Callback = function(v) Settings.AA_SpinSpeed = v end
+        })
+    end
 
     -- 6. EXPLOITS
-    local peakexbox = Tabs.Exploits:AddLeftGroupbox('Peak Kill (Resolver)')
-    local peakToggle = peakexbox:AddToggle('PeakKill_Enabled', {
-        Text = 'Enable Peak Kill',
-        Default = false,
-        Callback = function(v)
-            Settings.PeakKill_Enabled = v
-            if v then
-                State.wasAACS2_Active = Settings.AACSP_Enabled
-                if Settings.AACSP_Enabled then
-                    Settings.AACSP_Enabled = false
-                    pcall(function()
-                        if Library.Toggles and Library.Toggles.AACSP_Enabled then
-                            Library.Toggles.AACSP_Enabled:SetValue(false)
-                        end
-                    end)
-                end
-            else
-                stopPeek()
-                if State.wasAACS2_Active then
-                    Settings.AACSP_Enabled = true
-                    pcall(function()
-                        if Library.Toggles and Library.Toggles.AACSP_Enabled then
-                            Library.Toggles.AACSP_Enabled:SetValue(true)
-                        end
-                    end)
-                    State.wasAACS2_Active = false
+    do
+        local peakexbox = Tabs.Exploits:AddLeftGroupbox('Peak Kill (Resolver)')
+        local peakToggle = peakexbox:AddToggle('PeakKill_Enabled', {
+            Text = 'Enable Peak Kill',
+            Default = false,
+            Callback = function(v)
+                Settings.PeakKill_Enabled = v
+                if v then
+                    State.wasAACS2_Active = Settings.AACSP_Enabled
+                    if Settings.AACSP_Enabled then
+                        Settings.AACSP_Enabled = false
+                        pcall(function()
+                            if Library.Toggles and Library.Toggles.AACSP_Enabled then
+                                Library.Toggles.AACSP_Enabled:SetValue(false)
+                            end
+                        end)
+                    end
+                else
+                    stopPeek()
+                    if State.wasAACS2_Active then
+                        Settings.AACSP_Enabled = true
+                        pcall(function()
+                            if Library.Toggles and Library.Toggles.AACSP_Enabled then
+                                Library.Toggles.AACSP_Enabled:SetValue(true)
+                            end
+                        end)
+                        State.wasAACS2_Active = false
+                    end
                 end
             end
-        end
-    })
-    peakToggle:AddKeyPicker('PeakKill_Key', { Default = 'Z', SyncToggleState = true, Mode = 'Toggle', Text = 'Peak Kill' })
+        })
+        peakToggle:AddKeyPicker('PeakKill_Key', { Default = 'Z', SyncToggleState = true, Mode = 'Toggle', Text = 'Peak Kill' })
 
-    peakexbox:AddDropdown('PeakKill_Mode', {
-        Values = {'Вверх (Up)', 'Вниз (Down)', 'Влево (Left)', 'Вправо (Right)'},
-        Default = 1,
-        Multi = false,
-        Text = 'Peak Direction',
-        Callback = function(v) Settings.PeakKill_Mode = v end
-    })
+        peakexbox:AddDropdown('PeakKill_Mode', {
+            Values = {'Вверх (Up)', 'Вниз (Down)', 'Влево (Left)', 'Вправо (Right)'},
+            Default = 1,
+            Multi = false,
+            Text = 'Peak Direction',
+            Callback = function(v) Settings.PeakKill_Mode = v end
+        })
 
-    peakexbox:AddLabel('Cycle Direction Key'):AddKeyPicker('PeakKill_CycleKey', { Default = 'X', Mode = 'Toggle', Text = 'Cycle Peak Direction' })
-    peakexbox:AddSlider('PeakKill_Offset', {
-        Text = 'Peak Offset Distance',
-        Default = 15,
-        Min = 5,
-        Max = 50,
-        Rounding = 0,
-        Callback = function(v) Settings.PeakKill_Offset = v end
-    })
+        peakexbox:AddLabel('Cycle Direction Key'):AddKeyPicker('PeakKill_CycleKey', { Default = 'X', Mode = 'Toggle', Text = 'Cycle Peak Direction' })
+        peakexbox:AddSlider('PeakKill_Offset', {
+            Text = 'Peak Offset Distance',
+            Default = 15,
+            Min = 5,
+            Max = 50,
+            Rounding = 0,
+            Callback = function(v) Settings.PeakKill_Offset = v end
+        })
 
-    local fustMoveBox = Tabs.Exploits:AddLeftGroupbox('Fust Survival Movement')
-    local fustSpdToggle = fustMoveBox:AddToggle('Fust_Speed_Enabled', {
-        Text = 'speed (fust sv by fliriz)',
-        Default = false,
-        Callback = function(v)
-            Settings.Fust_Speed_Enabled = v
-            if not v then cleanupSpeedConstraints() end
-        end
-    })
-    fustSpdToggle:AddKeyPicker('Fust_Speed_Key', { Default = 'LeftAlt', SyncToggleState = true, Mode = 'Toggle', Text = 'speed (fust sv by fliriz)' })
-
-    fustMoveBox:AddDropdown('Fust_Speed_Mode', {
-        Values = {'Smooth', 'Slide'},
-        Default = 1,
-        Multi = false,
-        Text = 'Fust Speed Mode',
-        Callback = function(v) Settings.Fust_Speed_Mode = v end
-    })
-
-    fustMoveBox:AddSlider('Fust_Speed_Power', {
-        Text = 'Fust Target Spd',
-        Default = 23,
-        Min = 17,
-        Max = 36,
-        Rounding = 0,
-        Callback = function(v) Settings.Fust_Speed_Power = v end
-    })
-
-    fustMoveBox:AddDivider()
-    local fustLayToggle = fustMoveBox:AddToggle('Fust_Lay_Enabled', {
-        Text = 'Lay (Лечь)',
-        Default = false,
-        Callback = function(v) setFustLayState(v) end
-    })
-    fustLayToggle:AddKeyPicker('Fust_Lay_Key', { Default = 'None', SyncToggleState = true, Mode = 'Toggle', Text = 'Lay (Лечь)' })
-
-    fustMoveBox:AddToggle('Fust_Spider_Enabled', {
-        Text = 'Spider (Стены на W)',
-        Default = false,
-        Callback = function(v) Settings.Fust_Spider_Enabled = v end
-    })
-
-    fustMoveBox:AddSlider('Fust_Spider_Speed', {
-        Text = 'Spider Climb Speed',
-        Default = 40,
-        Min = 10,
-        Max = 150,
-        Rounding = 0,
-        Callback = function(v) Settings.Fust_Spider_Speed = v end
-    })
-
-    local desyncbox = Tabs.Exploits:AddRightGroupbox('Movement & Desync')
-    desyncbox:AddToggle('Speed_Enabled', {
-        Text = 'Speedhack',
-        Default = false,
-        Callback = function(v)
-            Settings.Speed_Enabled = v
-            if not v and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-                LocalPlayer.Character.Humanoid.WalkSpeed = 16
+        local fustMoveBox = Tabs.Exploits:AddLeftGroupbox('Fust Survival Movement')
+        local fustSpdToggle = fustMoveBox:AddToggle('Fust_Speed_Enabled', {
+            Text = 'speed (fust sv by fliriz)',
+            Default = false,
+            Callback = function(v)
+                Settings.Fust_Speed_Enabled = v
+                if not v then cleanupSpeedConstraints() end
             end
-        end
-    })
-    desyncbox:AddSlider('Speed_Value', {
-        Text = 'WalkSpeed',
-        Default = 50,
-        Min = 16,
-        Max = 250,
-        Rounding = 0,
-        Callback = function(v) Settings.Speed_Value = v end
-    })
+        })
+        fustSpdToggle:AddKeyPicker('Fust_Speed_Key', { Default = 'LeftAlt', SyncToggleState = true, Mode = 'Toggle', Text = 'speed (fust sv by fliriz)' })
 
-    desyncbox:AddToggle('BhopRage_Enabled', {
-        Text = 'Bhop-rage (Air Speed)',
-        Default = false,
-        Callback = function(v) Settings.BhopRage_Enabled = v end
-    })
-    desyncbox:AddSlider('BhopRage_Speed', {
-        Text = 'Bhop-rage Speed',
-        Default = 65,
-        Min = 20,
-        Max = 250,
-        Rounding = 0,
-        Callback = function(v) Settings.BhopRage_Speed = v end
-    })
+        fustMoveBox:AddDropdown('Fust_Speed_Mode', {
+            Values = {'Smooth', 'Slide'},
+            Default = 1,
+            Multi = false,
+            Text = 'Fust Speed Mode',
+            Callback = function(v) Settings.Fust_Speed_Mode = v end
+        })
 
-    desyncbox:AddToggle('Desync_Enabled', {
-        Text = 'CS2 Desync (Lag Behind)',
-        Default = false,
-        Callback = function(v) Settings.Desync_Enabled = v end
-    })
-    desyncbox:AddSlider('Desync_Distance', {
-        Text = 'Lag Behind Distance',
-        Default = 5,
-        Min = 1,
-        Max = 15,
-        Rounding = 0,
-        Callback = function(v) Settings.Desync_Distance = v end
-    })
-    desyncbox:AddToggle('Desync_Vis', {
-        Text = 'Desync Ghost Visualizer',
-        Default = false,
-        Callback = function(v) Settings.Desync_Vis = v end
-    })
-    desyncbox:AddToggle('Desync_AntiPredict', {
-        Text = 'Velocity Spoof (Anti-Predict)',
-        Default = false,
-        Callback = function(v) Settings.Desync_AntiPredict = v end
-    })
+        fustMoveBox:AddSlider('Fust_Speed_Power', {
+            Text = 'Fust Target Spd',
+            Default = 23,
+            Min = 17,
+            Max = 36,
+            Rounding = 0,
+            Callback = function(v) Settings.Fust_Speed_Power = v end
+        })
 
-    -- 7. HITSOUNDS
-    local sndbox = Tabs.HitSounds:AddLeftGroupbox('HitSound Controls')
-    sndbox:AddToggle('HitSound_Enabled', {
-        Text = 'Enable HitSounds',
-        Default = false,
-        Callback = function(v) Settings.HitSound_Enabled = v end
-    })
-    sndbox:AddDropdown('HitSound_Type', {
-        Values = {'Skeet', 'Rust', 'COD', 'Custom'},
-        Default = 1,
-        Multi = false,
-        Text = 'Preset',
-        Callback = function(v) Settings.HitSound_Type = v end
-    })
-    sndbox:AddSlider('HitSound_Volume', {
-        Text = 'Volume (%)',
-        Default = 100,
-        Min = 0,
-        Max = 400,
-        Rounding = 0,
-        Callback = function(v) Settings.HitSound_Volume = v end
-    })
+        fustMoveBox:AddDivider()
+        local fustLayToggle = fustMoveBox:AddToggle('Fust_Lay_Enabled', {
+            Text = 'Lay (Лечь)',
+            Default = false,
+            Callback = function(v) setFustLayState(v) end
+        })
+        fustLayToggle:AddKeyPicker('Fust_Lay_Key', { Default = 'None', SyncToggleState = true, Mode = 'Toggle', Text = 'Lay (Лечь)' })
 
-    local sndtest = Tabs.HitSounds:AddRightGroupbox('Custom Sound & Test')
-    sndtest:AddInput('HitSound_CustomID', {
-        Default = '',
-        Numeric = false,
-        Finished = false,
-        Text = 'Custom Sound ID',
-        Placeholder = 'e.g. 4817809188',
-        Callback = function(v) Settings.HitSound_CustomID = v end
-    })
-    sndtest:AddButton('Test HitSound', function() playHitSound() end)
+        fustMoveBox:AddToggle('Fust_Spider_Enabled', {
+            Text = 'Spider (Стены на W)',
+            Default = false,
+            Callback = function(v) Settings.Fust_Spider_Enabled = v end
+        })
 
-    -- 8. SETTINGS & SAVE MANAGER
-    local menubox = Tabs['Settings']:AddRightGroupbox('Menu Controls')
-    menubox:AddLabel('Menu Keybind'):AddKeyPicker('MenuKeybind', { Default = 'RightShift', NoUI = true, Text = 'Menu Keybind' })
+        fustMoveBox:AddSlider('Fust_Spider_Speed', {
+            Text = 'Spider Climb Speed',
+            Default = 40,
+            Min = 10,
+            Max = 150,
+            Rounding = 0,
+            Callback = function(v) Settings.Fust_Spider_Speed = v end
+        })
 
-    menubox:AddButton('Unload Script', function()
-        pcall(function() Library:Unload() end)
-        destroyLinoriaUI()
-    end)
+        local desyncbox = Tabs.Exploits:AddRightGroupbox('Movement & Desync')
+        desyncbox:AddToggle('Speed_Enabled', {
+            Text = 'Speedhack',
+            Default = false,
+            Callback = function(v)
+                Settings.Speed_Enabled = v
+                if not v and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                    LocalPlayer.Character.Humanoid.WalkSpeed = 16
+                end
+            end
+        })
+        desyncbox:AddSlider('Speed_Value', {
+            Text = 'WalkSpeed',
+            Default = 50,
+            Min = 16,
+            Max = 250,
+            Rounding = 0,
+            Callback = function(v) Settings.Speed_Value = v end
+        })
 
-    pcall(function()
-        if Library.Options and Library.Options.MenuKeybind then
-            Library.ToggleKeybind = Library.Options.MenuKeybind
-        end
-    end)
+        desyncbox:AddToggle('BhopRage_Enabled', {
+            Text = 'Bhop-rage (Air Speed)',
+            Default = false,
+            Callback = function(v) Settings.BhopRage_Enabled = v end
+        })
+        desyncbox:AddSlider('BhopRage_Speed', {
+            Text = 'Bhop-rage Speed',
+            Default = 65,
+            Min = 20,
+            Max = 250,
+            Rounding = 0,
+            Callback = function(v) Settings.BhopRage_Speed = v end
+        })
 
-    ThemeManager:SetLibrary(Library)
-    SaveManager:SetLibrary(Library)
+        desyncbox:AddToggle('Desync_Enabled', {
+            Text = 'CS2 Desync (Lag Behind)',
+            Default = false,
+            Callback = function(v) Settings.Desync_Enabled = v end
+        })
+        desyncbox:AddSlider('Desync_Distance', {
+            Text = 'Lag Behind Distance',
+            Default = 5,
+            Min = 1,
+            Max = 15,
+            Rounding = 0,
+            Callback = function(v) Settings.Desync_Distance = v end
+        })
+        desyncbox:AddToggle('Desync_Vis', {
+            Text = 'Desync Ghost Visualizer',
+            Default = false,
+            Callback = function(v) Settings.Desync_Vis = v end
+        })
+        desyncbox:AddToggle('Desync_AntiPredict', {
+            Text = 'Velocity Spoof (Anti-Predict)',
+            Default = false,
+            Callback = function(v) Settings.Desync_AntiPredict = v end
+        })
+    end
 
-    SaveManager:IgnoreThemeSettings()
-    SaveManager:SetIgnoreIndexes({ 'MenuKeybind', 'PeakKill_Key', 'TP_Key', 'PeakKill_CycleKey', 'Fust_Speed_Key', 'Fust_Lay_Key', 'Fust_Zoom_Key' })
+    -- 7. HITSOUNDS & 8. SETTINGS
+    do
+        local sndbox = Tabs.HitSounds:AddLeftGroupbox('HitSound Controls')
+        sndbox:AddToggle('HitSound_Enabled', {
+            Text = 'Enable HitSounds',
+            Default = false,
+            Callback = function(v) Settings.HitSound_Enabled = v end
+        })
+        sndbox:AddDropdown('HitSound_Type', {
+            Values = {'Skeet', 'Rust', 'COD', 'Custom'},
+            Default = 1,
+            Multi = false,
+            Text = 'Preset',
+            Callback = function(v) Settings.HitSound_Type = v end
+        })
+        sndbox:AddSlider('HitSound_Volume', {
+            Text = 'Volume (%)',
+            Default = 100,
+            Min = 0,
+            Max = 400,
+            Rounding = 0,
+            Callback = function(v) Settings.HitSound_Volume = v end
+        })
 
-    ThemeManager:SetFolder('Skeetparser')
-    SaveManager:SetFolder('Skeetparser/RandomizerRedux')
+        local sndtest = Tabs.HitSounds:AddRightGroupbox('Custom Sound & Test')
+        sndtest:AddInput('HitSound_CustomID', {
+            Default = '',
+            Numeric = false,
+            Finished = false,
+            Text = 'Custom Sound ID',
+            Placeholder = 'e.g. 4817809188',
+            Callback = function(v) Settings.HitSound_CustomID = v end
+        })
+        sndtest:AddButton('Test HitSound', function() playHitSound() end)
 
-    SaveManager:BuildConfigSection(Tabs['Settings'])
-    ThemeManager:ApplyToTab(Tabs['Settings'])
+        local menubox = Tabs['Settings']:AddRightGroupbox('Menu Controls')
+        menubox:AddLabel('Menu Keybind'):AddKeyPicker('MenuKeybind', { Default = 'RightShift', NoUI = true, Text = 'Menu Keybind' })
+
+        menubox:AddButton('Unload Script', function()
+            pcall(function() Library:Unload() end)
+            destroyLinoriaUI()
+        end)
+
+        pcall(function()
+            if Library.Options and Library.Options.MenuKeybind then
+                Library.ToggleKeybind = Library.Options.MenuKeybind
+            end
+        end)
+
+        ThemeManager:SetLibrary(Library)
+        SaveManager:SetLibrary(Library)
+
+        SaveManager:IgnoreThemeSettings()
+        SaveManager:SetIgnoreIndexes({ 'MenuKeybind', 'PeakKill_Key', 'TP_Key', 'PeakKill_CycleKey', 'Fust_Speed_Key', 'Fust_Lay_Key', 'Fust_Zoom_Key' })
+
+        ThemeManager:SetFolder('Skeetparser')
+        SaveManager:SetFolder('Skeetparser/RandomizerRedux')
+
+        SaveManager:BuildConfigSection(Tabs['Settings'])
+        ThemeManager:ApplyToTab(Tabs['Settings'])
+    end
 end
 
 -- Обработка Unload
 Library:OnUnload(function()
-    IsUnloaded = true
+    State.IsUnloaded = true
     
     pcall(function()
         RunService:UnbindFromRenderStep("FustZoomOverride")
@@ -4179,20 +4584,22 @@ Library:OnUnload(function()
 
     for _, conn in pairs(Connections) do conn:Disconnect() end
     Connections = {}
-    for _, c in ipairs(weaponFireConns) do if c.Connected then c:Disconnect() end end
-    table.clear(weaponFireConns)
-    if espUpdateConn then espUpdateConn:Disconnect() end
-    if workspaceAddedConn then espUpdateConn:Disconnect() end
-    if tracerWorkspaceConn then tracerWorkspaceConn:Disconnect() end
+    for _, c in ipairs(State.weaponFireConns) do if c.Connected then c:Disconnect() end end
+    table.clear(State.weaponFireConns)
+    if State.espUpdateConn then State.espUpdateConn:Disconnect() end
+    if State.workspaceAddedConn then State.workspaceAddedConn:Disconnect() end
+    if State.tracerWorkspaceConn then State.tracerWorkspaceConn:Disconnect() end
 
     setFustLayState(false)
     cleanupSpeedConstraints()
     clearAllCarESP()
-    for _, ui in pairs(invUIs) do if ui then ui:Destroy() end end
-    table.clear(invUIs)
-    table.clear(memoryInventory)
-    if tracerFolder then tracerFolder:Destroy() end
-    if fustOverlayGui then fustOverlayGui:Destroy() end
+    for _, ui in pairs(State.invUIs) do if ui then ui:Destroy() end end
+    table.clear(State.invUIs)
+    table.clear(State.memoryInventory)
+    table.clear(State.teamCheckCache)
+    if State.tracerFolder then State.tracerFolder:Destroy() end
+    if State.fustOverlayGui then State.fustOverlayGui:Destroy() end
+    if Preview.Gui then Preview.Gui:Destroy() end
     
     restoreWalls()
     Settings.NightMode_Enabled = false
@@ -4208,11 +4615,11 @@ Library:OnUnload(function()
         if tool and tool.Parent then tool.Grip = grip end
     end
     
-    if colorCorrection then colorCorrection:Destroy() end
+    if State.colorCorrection then State.colorCorrection:Destroy() end
     stopPeek()
     
     if State.currentGhost then State.currentGhost:Destroy() end
-    if peakGui then peakGui:Destroy() end
+    if State.peakGui then State.peakGui:Destroy() end
     
     local char = LocalPlayer.Character
     if char then
@@ -4234,10 +4641,10 @@ Library:OnUnload(function()
         if model and typeof(model) == "Instance" then applyChamsRobust(model, nil, nil, false) end
     end
 
-    pcall(function() fovCircle:Remove() end)
-    pcall(function() crosshairText:Remove() end)
+    pcall(function() State.fovCircle:Remove() end)
+    pcall(function() State.crosshairText:Remove() end)
     
-    for _, line in pairs(crosshairLines) do pcall(function() line:Remove() end) end
+    for _, line in pairs(State.crosshairLines) do pcall(function() line:Remove() end) end
     for _, drawings in pairs(espCache) do
         for _, obj in pairs(drawings) do pcall(function() obj:Remove() end) end
     end
